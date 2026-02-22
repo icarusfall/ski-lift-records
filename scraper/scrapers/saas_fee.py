@@ -1,18 +1,18 @@
 """
-Scraper for Saas-Fee using the saas-fee.ch open lifts page.
+Scraper for Saas-Fee using the saas-fee.ch/en/open-lifts/saas-fee page.
 
-The page at /en/.../open-lifts is SSR and shows individual lift rows
-with open/closed status. Falls back gracefully if structure is unrecognised.
+Page structure (SSR):
+  Each lift is a div.row containing:
+    div.name-icon-wrap > h6.header  (lift name)
+    div.status-text                 (text: "open" | "closed")
+    div.status-icon.circle-open/circle-closed  (icon backup)
 """
 
 import requests
 from bs4 import BeautifulSoup
 from .base import LiftStatus, ResortSnapshot
 
-URL = (
-    "https://www.saas-fee.ch/en/services-informationen/"
-    "prices-timetables-cable-cars/timetables-cable-cars/open-lifts"
-)
+URL = "https://www.saas-fee.ch/en/open-lifts/saas-fee"
 
 HEADERS = {
     "User-Agent": (
@@ -22,27 +22,6 @@ HEADERS = {
     ),
     "Accept-Language": "en-GB,en;q=0.9",
 }
-
-_OPEN_WORDS = {"open", "geöffnet", "offen", "ouvert"}
-_CLOSED_WORDS = {"closed", "geschlossen", "fermé", "ferme", "geschl"}
-
-
-def _status_from_text(text: str) -> str | None:
-    t = text.lower().strip()
-    if any(w in t for w in _OPEN_WORDS):
-        return "open"
-    if any(w in t for w in _CLOSED_WORDS):
-        return "closed"
-    return None
-
-
-def _status_from_classes(classes: list[str]) -> str | None:
-    joined = " ".join(classes).lower()
-    if "is-open" in joined or "status-open" in joined or "open" in joined:
-        return "open"
-    if "is-closed" in joined or "status-closed" in joined or "closed" in joined:
-        return "closed"
-    return None
 
 
 def scrape(resort_id: str = "saas-fee") -> ResortSnapshot:
@@ -56,64 +35,46 @@ def scrape(resort_id: str = "saas-fee") -> ResortSnapshot:
         return snapshot
 
     lifts: list[LiftStatus] = []
+    seen_names: set[str] = set()
 
-    # Pattern 1: table rows (name in first cell, status in subsequent cells)
-    for table in soup.find_all("table"):
-        for row in table.find_all("tr"):
-            cells = row.find_all(["td", "th"])
-            if len(cells) < 2:
-                continue
-            name = cells[0].get_text(separator=" ", strip=True)
-            if not name or len(name) < 2:
-                continue
-            # Skip header-like cells
-            if name.lower() in {"name", "lift", "anlage", "status", ""}:
-                continue
+    # Each lift row: div.row containing div.name-icon-wrap + div.status-wrap
+    for row in soup.find_all("div", class_="row"):
+        name_wrap = row.find("div", class_="name-icon-wrap")
+        if not name_wrap:
+            continue
 
-            status: str | None = None
-            for cell in cells[1:]:
-                # Check CSS classes on child elements first
-                for elem in cell.find_all(True):
-                    status = _status_from_classes(elem.get("class") or [])
-                    if status:
-                        break
-                if not status:
-                    status = _status_from_text(cell.get_text(strip=True))
-                if status:
-                    break
+        h6 = name_wrap.find("h6", class_="header")
+        if not h6:
+            continue
+        name = h6.get_text(strip=True)
+        if not name:
+            continue
 
-            if status:
-                lifts.append(LiftStatus(name=name, status=status))
+        # Deduplicate
+        if name in seen_names:
+            continue
+        seen_names.add(name)
 
-    # Pattern 2: list/div items with paired name + status elements
-    if not lifts:
-        candidates = soup.find_all(
-            ["li", "article", "div"],
-            class_=lambda c: c and any(
-                w in " ".join(c).lower()
-                for w in ["lift", "facility", "installation", "anlage", "gondola"]
-            ),
-        )
-        for item in candidates:
-            # Name: first text-bearing child
-            name_elem = item.find(["span", "div", "p", "h3", "h4", "strong"])
-            if not name_elem:
-                continue
-            name = name_elem.get_text(strip=True)
-            if not name or len(name) < 2:
+        # Skip cross-country ski routes (not alpine lifts)
+        if name.endswith(("(Klassisch)", "(Skating)")):
+            continue
+
+        # Status from div.status-text ("open" / "closed")
+        status_div = row.find("div", class_="status-text")
+        if status_div:
+            text = status_div.get_text(strip=True).lower()
+            if text in ("open", "closed"):
+                lifts.append(LiftStatus(name=name, status=text))
                 continue
 
-            # Status: look for a status-bearing sibling/child element
-            status = None
-            for elem in item.find_all(True):
-                status = _status_from_classes(elem.get("class") or [])
-                if status:
-                    break
-            if not status:
-                status = _status_from_text(item.get_text(strip=True))
-
-            if name and status:
-                lifts.append(LiftStatus(name=name, status=status))
+        # Fallback: status-icon circle-open / circle-closed
+        icon_div = row.find("div", class_="status-icon")
+        if icon_div:
+            icon_classes = icon_div.get("class", [])
+            if "circle-open" in icon_classes:
+                lifts.append(LiftStatus(name=name, status="open"))
+            elif "circle-closed" in icon_classes:
+                lifts.append(LiftStatus(name=name, status="closed"))
 
     if lifts:
         snapshot.lifts = lifts

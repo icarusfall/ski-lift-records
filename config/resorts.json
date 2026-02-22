@@ -164,7 +164,7 @@
     "area": "Saas Valley",
     "top_altitude_m": 3600,
     "scraper": "saas-fee",
-    "primary_url": "https://www.saas-fee.ch/en/services-informationen/prices-timetables-cable-cars/timetables-cable-cars/open-lifts",
+    "primary_url": "https://www.saas-fee.ch/en/open-lifts/saas-fee",
     "bergfex_slug": "saas-fee",
     "notes": "High glacier, year-round skiing possible"
   },
