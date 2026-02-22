@@ -27,10 +27,10 @@
     "country": "FR",
     "area": "Les 3 Vallées",
     "top_altitude_m": 3230,
-    "scraper": "lumiplan",
-    "primary_url": "https://www.seevalthorens.com/lifts/status",
+    "scraper": "les3vallees",
+    "primary_url": "https://www.les3vallees.com/en/live/lifts-and-trails-opening",
     "bergfex_slug": "val-thorens",
-    "notes": "Highest resort in the Alps; Lumiplan page may include Les Menuires sector"
+    "notes": "Highest resort in the Alps; lumiplan/seevalthorens.com includes Les Menuires lifts and inter-resort route noise"
   },
   {
     "id": "les-menuires",

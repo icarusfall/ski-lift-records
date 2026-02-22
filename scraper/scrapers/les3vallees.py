@@ -1,7 +1,7 @@
 """
 Scraper for resorts on les3vallees.com/en/live/lifts-and-trails-opening.
 
-Covers: Courchevel, Méribel, Les Menuires–Saint-Martin, Val Thorens–Orelle.
+Covers: Courchevel, Méribel, Val Thorens.
 Page is SSR'd — lift rows are in accordion sections.
 
 HTML structure:
@@ -11,8 +11,11 @@ HTML structure:
       button.prl__state-table-action > span.prl__state-table-action-name  contains "Lifts"
       div.prl__accordion-body
         div.prl__state-track-item
-          p.prl__state-track-label  SVG icon + name text + "HH:MM HH:MM"
-          span.tag.tag--{success|error|warning|disabled}
+          p.prl__state-track-label
+            span.prl__state-track-label-name
+              span.prl__state-track-label-container > span  lift name
+              span.prl__state-track-label-schedule          HH:MM HH:MM (excluded)
+          p.prl__state-track-tag > span.tag.tag--{success|error|warning|disabled}
 
 Status mapping:
   tag--success -> open
@@ -21,8 +24,8 @@ Status mapping:
   tag--disabled -> skip (off season)
 """
 
-import re
 import requests
+from collections import Counter
 from bs4 import BeautifulSoup
 from .base import LiftStatus, ResortSnapshot
 
@@ -51,27 +54,24 @@ STATUS_MAP = {
     "tag--disabled": None,     # off season
 }
 
-# Strips trailing "HH:MM HH:MM" from the concatenated label text
-_TIME_RE = re.compile(r"\s*\d{2}:\d{2}\s+\d{2}:\d{2}\s*$")
-
 
 def _parse_section(body) -> list[LiftStatus]:
     """Parse lift items from an accordion body div."""
-    lifts: list[LiftStatus] = []
+    raw: list[tuple[str, str]] = []  # (name, status)
     for table_item in body.find_all(class_="prl__state-table-item"):
         name_span = table_item.find(class_="prl__state-table-action-name")
         if not (name_span and "Lifts" in name_span.get_text()):
             continue
         for track in table_item.find_all(class_="prl__state-track-item"):
-            label = track.find(class_="prl__state-track-label")
+            # Name: in label-name span, excluding the schedule child
+            label_name = track.find(class_="prl__state-track-label-name")
             tag = track.find(class_="tag")
-            if not (label and tag):
+            if not (label_name and tag):
                 continue
-
-            # Remove SVG type icon from label before reading text
-            for svg in label.find_all("svg"):
-                svg.decompose()
-            name = _TIME_RE.sub("", label.get_text(strip=True)).rstrip(".")
+            sched = label_name.find(class_="prl__state-track-label-schedule")
+            if sched:
+                sched.decompose()
+            name = label_name.get_text(strip=True).rstrip(".")
             if not name:
                 continue
 
@@ -81,7 +81,17 @@ def _parse_section(body) -> list[LiftStatus]:
                     status = STATUS_MAP[cls]
                     break
             if status:
-                lifts.append(LiftStatus(name=name, status=status))
+                raw.append((name, status))
+
+    # Deduplicate: if same name appears more than once, append " 2", " 3", etc.
+    counts: Counter = Counter(n for n, _ in raw)
+    seen: Counter = Counter()
+    lifts: list[LiftStatus] = []
+    for name, status in raw:
+        if counts[name] > 1:
+            seen[name] += 1
+            name = f"{name} {seen[name]}"
+        lifts.append(LiftStatus(name=name, status=status))
     return lifts
 
 

@@ -63,7 +63,7 @@ def scrape(resort_id: str, url: str) -> ResortSnapshot:
         if not name_elem or not value_elem:
             continue
 
-        name = name_elem.get_text(strip=True)
+        name = name_elem.get_text(strip=True).rstrip(".")
         if not name:
             continue
 
