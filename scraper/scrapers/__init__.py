@@ -1,6 +1,6 @@
 """Scraper registry — maps scraper type name to scrape function."""
 from .base import ResortSnapshot
-from . import cervinia, saas_fee, bergfex
+from . import cervinia, saas_fee, lumiplan, bergfex
 
 
 def run_scraper(resort: dict) -> ResortSnapshot:
@@ -14,6 +14,8 @@ def run_scraper(resort: dict) -> ResortSnapshot:
         snap = cervinia.scrape(resort["id"])
     elif scraper_type == "saas-fee":
         snap = saas_fee.scrape(resort["id"])
+    elif scraper_type == "lumiplan":
+        snap = lumiplan.scrape(resort["id"], resort["primary_url"])
     else:
         snap = ResortSnapshot(resort_id=resort["id"], source="unknown")
         snap.error = f"Unknown scraper type: {scraper_type}"
