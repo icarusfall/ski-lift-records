@@ -1,0 +1,278 @@
+[
+  {
+    "id": "cervinia",
+    "name": "Breuil-Cervinia",
+    "country": "IT",
+    "area": "Matterhorn",
+    "top_altitude_m": 3480,
+    "scraper": "cervinia",
+    "primary_url": "https://www.cervinia.it/en/impianti",
+    "bergfex_slug": "breuil-cervinia",
+    "notes": "Italian side of Matterhorn; linked to Zermatt"
+  },
+  {
+    "id": "zermatt",
+    "name": "Zermatt",
+    "country": "CH",
+    "area": "Matterhorn",
+    "top_altitude_m": 3883,
+    "scraper": "bergfex",
+    "primary_url": "https://www.matterhornparadise.ch/en/information/lifts-and-pistes",
+    "bergfex_slug": "zermatt",
+    "notes": "Swiss side of Matterhorn; linked to Cervinia. matterhornparadise.ch is CSR (TYPO3), bergfex used as fallback"
+  },
+  {
+    "id": "val-thorens",
+    "name": "Val Thorens",
+    "country": "FR",
+    "area": "Les 3 Vallées",
+    "top_altitude_m": 3230,
+    "scraper": "bergfex",
+    "primary_url": "https://www.valthorens.com/en/mountain/conditions/",
+    "bergfex_slug": "val-thorens",
+    "notes": "Highest resort in the Alps"
+  },
+  {
+    "id": "les-menuires",
+    "name": "Les Menuires",
+    "country": "FR",
+    "area": "Les 3 Vallées",
+    "top_altitude_m": 2850,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "les-menuires"
+  },
+  {
+    "id": "meribel",
+    "name": "Méribel",
+    "country": "FR",
+    "area": "Les 3 Vallées",
+    "top_altitude_m": 2952,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "meribel",
+    "notes": "Includes Méribel-Mottaret"
+  },
+  {
+    "id": "courchevel",
+    "name": "Courchevel",
+    "country": "FR",
+    "area": "Les 3 Vallées",
+    "top_altitude_m": 2738,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "courchevel"
+  },
+  {
+    "id": "saint-martin",
+    "name": "Saint-Martin-de-Belleville",
+    "country": "FR",
+    "area": "Les 3 Vallées",
+    "top_altitude_m": 2850,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "saint-martin-de-belleville",
+    "notes": "Often reports 0 lifts - data quality TBC"
+  },
+  {
+    "id": "tignes",
+    "name": "Tignes",
+    "country": "FR",
+    "area": "Espace Killy",
+    "top_altitude_m": 3456,
+    "scraper": "bergfex",
+    "primary_url": "https://www.tignes.net/en/mountain-conditions/",
+    "bergfex_slug": "tignes",
+    "notes": "Grande Motte funicular is wind-immune"
+  },
+  {
+    "id": "val-disere",
+    "name": "Val d'Isère",
+    "country": "FR",
+    "area": "Espace Killy",
+    "top_altitude_m": 3300,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "val-disere"
+  },
+  {
+    "id": "les-arcs",
+    "name": "Les Arcs",
+    "country": "FR",
+    "area": "Paradiski",
+    "top_altitude_m": 3226,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "les-arcs-bourg-saint-maurice"
+  },
+  {
+    "id": "la-plagne",
+    "name": "La Plagne",
+    "country": "FR",
+    "area": "Paradiski",
+    "top_altitude_m": 3250,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "la-plagne"
+  },
+  {
+    "id": "alpe-dhuez",
+    "name": "Alpe d'Huez",
+    "country": "FR",
+    "area": "Grand Domaine",
+    "top_altitude_m": 3330,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "alpe-dhuez-grand-domaine"
+  },
+  {
+    "id": "les-deux-alpes",
+    "name": "Les Deux Alpes",
+    "country": "FR",
+    "area": "Les Deux Alpes",
+    "top_altitude_m": 3568,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "les2alpes",
+    "notes": "Glacier at 3568m"
+  },
+  {
+    "id": "chamonix",
+    "name": "Chamonix",
+    "country": "FR",
+    "area": "Mont Blanc",
+    "top_altitude_m": 3295,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "chamonix-mont-blanc",
+    "notes": "Multiple non-linked ski areas aggregated"
+  },
+  {
+    "id": "verbier",
+    "name": "Verbier / 4 Vallées",
+    "country": "CH",
+    "area": "4 Vallées",
+    "top_altitude_m": 3329,
+    "scraper": "bergfex",
+    "primary_url": "https://www.verbier.ch/en/skiing/snow-and-conditions/",
+    "bergfex_slug": "verbier"
+  },
+  {
+    "id": "saas-fee",
+    "name": "Saas-Fee",
+    "country": "CH",
+    "area": "Saas Valley",
+    "top_altitude_m": 3600,
+    "scraper": "saas-fee",
+    "primary_url": "https://www.saas-fee.ch/en/services-informationen/prices-timetables-cable-cars/timetables-cable-cars/open-lifts",
+    "bergfex_slug": "saas-fee",
+    "notes": "High glacier, year-round skiing possible"
+  },
+  {
+    "id": "andermatt",
+    "name": "Andermatt",
+    "country": "CH",
+    "area": "Andermatt-Sedrun",
+    "top_altitude_m": 2963,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "andermatt-gemsstock"
+  },
+  {
+    "id": "engelberg",
+    "name": "Engelberg",
+    "country": "CH",
+    "area": "Engelberg",
+    "top_altitude_m": 3028,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "engelberg"
+  },
+  {
+    "id": "st-anton",
+    "name": "St Anton am Arlberg",
+    "country": "AT",
+    "area": "Arlberg",
+    "top_altitude_m": 2811,
+    "scraper": "bergfex",
+    "primary_url": "https://www.stantonamarlberg.com/en/winter/ski-resort/ski-area-information",
+    "bergfex_slug": "stanton-stchristoph",
+    "notes": "Includes St Christoph and Stuben"
+  },
+  {
+    "id": "lech-zuers",
+    "name": "Lech / Zürs",
+    "country": "AT",
+    "area": "Arlberg",
+    "top_altitude_m": 2450,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "lech-zuers-arlberg",
+    "notes": "Now lift-linked to St Anton; different wind exposure profile"
+  },
+  {
+    "id": "ischgl",
+    "name": "Ischgl / Samnaun",
+    "country": "AT",
+    "area": "Silvretta Arena",
+    "top_altitude_m": 2872,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "silvretta-arena-ischgl-samnaun",
+    "notes": "Cross-border AT/CH; consistently rated most reliable"
+  },
+  {
+    "id": "soelden",
+    "name": "Sölden",
+    "country": "AT",
+    "area": "Ötztal",
+    "top_altitude_m": 3250,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "soelden",
+    "notes": "Two glaciers above 3000m"
+  },
+  {
+    "id": "hintertux",
+    "name": "Hintertux Glacier",
+    "country": "AT",
+    "area": "Zillertal",
+    "top_altitude_m": 3250,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "hintertux",
+    "notes": "Year-round glacier"
+  },
+  {
+    "id": "stubai",
+    "name": "Stubai Glacier",
+    "country": "AT",
+    "area": "Stubai",
+    "top_altitude_m": 3210,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "stubaier-gletscher",
+    "notes": "Year-round glacier"
+  },
+  {
+    "id": "warth-schroecken",
+    "name": "Warth-Schröcken",
+    "country": "AT",
+    "area": "Arlberg",
+    "top_altitude_m": 2080,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "warth-schroecken"
+  },
+  {
+    "id": "kaprun",
+    "name": "Kitzsteinhorn / Kaprun",
+    "country": "AT",
+    "area": "Kaprun",
+    "top_altitude_m": 3029,
+    "scraper": "bergfex",
+    "primary_url": null,
+    "bergfex_slug": "kitzsteinhorn-kaprun",
+    "notes": "Year-round glacier"
+  }
+]

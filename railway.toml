@@ -1,0 +1,16 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "gunicorn -w 2 -b 0.0.0.0:$PORT web.app:app"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "web"
+
+[[services]]
+name = "collector"
+startCommand = "python -m scraper.collect"
+# Railway cron syntax: runs daily at 12:00 UTC
+cronSchedule = "0 12 * * *"

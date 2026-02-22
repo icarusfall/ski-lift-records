@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:skiapi.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:community.home-assistant.io)",
+      "WebFetch(domain:www.the-ski-guru.com)",
+      "WebFetch(domain:developer.weatherunlocked.com)",
+      "WebFetch(domain:snowheads.com)",
+      "WebFetch(domain:www.snow-forecast.com)",
+      "WebFetch(domain:www.cervinia.it)",
+      "WebFetch(domain:ski-resort-stats.com)",
+      "WebFetch(domain:www.skiresort.info)",
+      "WebFetch(domain:web.archive.org)",
+      "Bash(curl:*)",
+      "Bash(echo =FR resorts containing our targets=:*)",
+      "Bash($PYTHON:*)",
+      "Bash(cd \"C:/Users/charl/ClaudeProjects/ski-lift-records\" && \\\\\nPYTHON=\"/c/Users/charl/AppData/Local/Programs/Python/Python310/python\" && \\\\\n$PYTHON - << 'PYEOF'\nimport sys\nsys.path.insert\\(0, '.'\\)\nfrom scraper.scrapers.cervinia import scrape\n\nsnap = scrape\\(\"cervinia\"\\)\nprint\\(f\"Source: {snap.source}\"\\)\nprint\\(f\"Error:  {snap.error}\"\\)\nprint\\(f\"Lifts:  {snap.lifts_open}/{snap.lifts_total} \\({snap.pct_open}%\\)\"\\)\nprint\\(f\"Pistes: {len\\(snap.pistes\\)}\"\\)\nprint\\(\\)\n\nlink_lifts = [l for l in snap.lifts if l.is_link]\nprint\\(f\"=== SUMMIT LINKS \\({len\\(link_lifts\\)}\\) ===\"\\)\nfor l in link_lifts:\n    print\\(f\"  [{l.status.upper\\(\\):6}] {l.name}\"\\)\n\nprint\\(f\"\\\\n=== ALL LIFTS ===\"\\)\nfor l in sorted\\(snap.lifts, key=lambda x: \\(x.status, x.name\\)\\):\n    print\\(f\"  [{l.status.upper\\(\\):6}] {'🔗' if l.is_link else '  '} {l.name}\"\\)\nPYEOF)",
+      "Bash(cd:*)",
+      "Bash(\"/c/Users/charl/AppData/Local/Programs/Python/Python310/python\":*)",
+      "Bash(head:*)"
+    ]
+  }
+}

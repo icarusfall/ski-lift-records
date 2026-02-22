@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ski Lift Tracker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f0f4f8; color: #1a202c; }
+  header { background: #2b6cb0; color: white; padding: 1rem 2rem; }
+  header h1 { font-size: 1.4rem; }
+  header p  { font-size: 0.85rem; opacity: 0.8; margin-top: 0.2rem; }
+  .container { max-width: 1200px; margin: 1.5rem auto; padding: 0 1rem; }
+  .links { margin-bottom: 1rem; font-size: 0.85rem; }
+  .links a { color: #2b6cb0; margin-right: 1rem; }
+  table { width: 100%; border-collapse: collapse; background: white;
+          border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  th { background: #2d3748; color: white; padding: 0.6rem 0.8rem;
+       text-align: left; font-size: 0.8rem; white-space: nowrap; }
+  td { padding: 0.5rem 0.8rem; border-bottom: 1px solid #e2e8f0;
+       font-size: 0.85rem; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #ebf8ff; }
+  .bar-wrap { width: 120px; background: #e2e8f0; border-radius: 4px;
+              height: 12px; overflow: hidden; display: inline-block; vertical-align: middle; }
+  .bar-fill  { height: 100%; border-radius: 4px; transition: width .3s; }
+  .pct-label { font-size: 0.8rem; color: #4a5568; margin-left: 6px; }
+  .error     { color: #c53030; font-size: 0.78rem; }
+  .hol-badge { background: #f6ad55; color: #744210; font-size: 0.7rem;
+               padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+  .area-header td { background: #edf2f7; font-weight: 600; font-size: 0.78rem;
+                    color: #4a5568; padding: 0.3rem 0.8rem; }
+  a.resort-link { color: #2b6cb0; text-decoration: none; }
+  a.resort-link:hover { text-decoration: underline; }
+  .flag { margin-right: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⛷ Ski Lift Tracker</h1>
+  <p>Daily noon-UTC snapshots — high-altitude European resorts</p>
+</header>
+<div class="container">
+  <div class="links">
+    <a href="/api/snapshots.csv">⬇ Latest CSV</a>
+    <a href="/api/full-history.csv">⬇ Full History CSV</a>
+    <a href="/api/snapshots.json">⬇ JSON</a>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Resort</th>
+        <th>Area</th>
+        <th>Alt.</th>
+        <th>Date</th>
+        <th>Lifts</th>
+        <th>% Open</th>
+        <th>Pistes (km)</th>
+        <th>Source</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% set current_area = namespace(value="") %}
+    {% for row in rows %}
+      {% set area_key = row.country + "|" + (row.area or "") %}
+      {% if area_key != current_area.value %}
+        {% set current_area.value = area_key %}
+        <tr class="area-header">
+          <td colspan="8">
+            {% set flags = {"FR": "🇫🇷", "CH": "🇨🇭", "IT": "🇮🇹", "AT": "🇦🇹"} %}
+            {{ flags.get(row.country, row.country) }} {{ row.area or row.country }}
+          </td>
+        </tr>
+      {% endif %}
+      <tr>
+        <td><a class="resort-link" href="/resort/{{ row.resort_id }}">{{ row.name }}</a></td>
+        <td>{{ row.area or "—" }}</td>
+        <td>{{ row.top_altitude_m }}m</td>
+        <td>
+          {{ row.snapshot_date }}
+          {% if row.is_uk_school_holiday %}
+            <span class="hol-badge">{{ row.holiday_name }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if row.scrape_error %}
+            <span class="error">Error</span>
+          {% else %}
+            {{ row.lifts_open }} / {{ row.lifts_total }}
+          {% endif %}
+        </td>
+        <td>
+          {% if row.pct_lifts_open is not none and not row.scrape_error %}
+            {% set pct = row.pct_lifts_open | float %}
+            {% if pct >= 80 %}{% set colour = "#48bb78" %}
+            {% elif pct >= 50 %}{% set colour = "#ed8936" %}
+            {% else %}{% set colour = "#f56565" %}{% endif %}
+            <span class="bar-wrap">
+              <span class="bar-fill" style="width:{{ pct }}%; background:{{ colour }};"></span>
+            </span>
+            <span class="pct-label">{{ "%.0f"|format(pct) }}%</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>
+          {% if row.pistes_open_km %}
+            {{ row.pistes_open_km }} / {{ row.pistes_total_km }} km
+          {% else %}—{% endif %}
+        </td>
+        <td style="font-size:0.75rem; color:#718096;">{{ row.source }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" style="padding:2rem; text-align:center; color:#718096;">
+        No data yet. Run the collector first.
+      </td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ resort_id }} — Ski Lift Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f0f4f8; color: #1a202c; }
+  header { background: #2b6cb0; color: white; padding: 1rem 2rem; }
+  header a { color: #bee3f8; font-size: 0.85rem; }
+  h2 { font-size: 1.2rem; margin-bottom: 1rem; }
+  .container { max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; }
+  .card { background: white; border-radius: 8px; padding: 1.2rem;
+          box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 1.5rem; }
+  canvas { max-height: 300px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { background: #2d3748; color: white; padding: 0.5rem 0.7rem; text-align: left; }
+  td { padding: 0.4rem 0.7rem; border-bottom: 1px solid #e2e8f0; }
+  .open   { color: #276749; font-weight: 600; }
+  .closed { color: #c53030; }
+  .link-lift { background: #ebf8ff; }
+  .hol { background: #fffbeb; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">← All resorts</a>
+  <h1 style="margin-top:0.3rem;">{{ resort_id }}</h1>
+</header>
+<div class="container">
+
+  <!-- % Open over time chart -->
+  <div class="card">
+    <h2>Lifts Open (%) — last 60 days</h2>
+    <canvas id="pctChart"></canvas>
+  </div>
+
+  <!-- Individual lift history (only shown if we have named lift data) -->
+  {% if lift_history %}
+  <div class="card">
+    <h2>Individual Lift History</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Lift</th>
+          <th>Link?</th>
+          {% set dates = lift_history | map(attribute='snapshot_date') | unique | list %}
+          {% for d in dates %}<th>{{ d.strftime("%d/%m") }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% set lift_data = {} %}
+        {% for row in lift_history %}
+          {% if row.name not in lift_data %}
+            {% set _ = lift_data.update({row.name: {"is_link": row.is_link, "dates": {}}}) %}
+          {% endif %}
+          {% set _ = lift_data[row.name]["dates"].update({row.snapshot_date: row.status}) %}
+        {% endfor %}
+        {% for lift_name, data in lift_data.items() | sort %}
+          <tr class="{{ 'link-lift' if data.is_link else '' }}">
+            <td>{{ lift_name }}</td>
+            <td>{{ "🔗" if data.is_link else "" }}</td>
+            {% for d in dates %}
+              {% set status = data.dates.get(d, "—") %}
+              <td class="{{ 'open' if status == 'open' else ('closed' if status == 'closed' else '') }}">
+                {{ "✓" if status == "open" else ("✗" if status == "closed" else "—") }}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Daily summary table -->
+  <div class="card">
+    <h2>Daily Summary</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th>Open</th><th>Total</th><th>%</th>
+          <th>Pistes Open km</th><th>Holiday</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in history | reverse %}
+        <tr class="{{ 'hol' if row.is_uk_school_holiday else '' }}">
+          <td>{{ row.snapshot_date }}</td>
+          <td>{{ row.lifts_open or "—" }}</td>
+          <td>{{ row.lifts_total or "—" }}</td>
+          <td>{{ "%.0f%%"|format(row.pct_lifts_open) if row.pct_lifts_open else "—" }}</td>
+          <td>{{ row.pistes_open_km or "—" }}</td>
+          <td>{{ row.holiday_name or "" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const historyData = {{ history | tojson }};
+const labels = historyData.map(r => r.snapshot_date);
+const pcts   = historyData.map(r => r.pct_lifts_open);
+const isHols = historyData.map(r => r.is_uk_school_holiday);
+
+const bgColours = pcts.map((p, i) => {
+  if (isHols[i]) return 'rgba(246,173,85,0.5)';
+  if (p === null) return 'rgba(200,200,200,0.3)';
+  if (p >= 80) return 'rgba(72,187,120,0.6)';
+  if (p >= 50) return 'rgba(237,137,54,0.6)';
+  return 'rgba(245,101,101,0.6)';
+});
+
+new Chart(document.getElementById('pctChart'), {
+  type: 'bar',
+  data: {
+    labels,
+    datasets: [{
+      label: '% Lifts Open',
+      data: pcts,
+      backgroundColor: bgColours,
+      borderColor: bgColours.map(c => c.replace('0.6','1').replace('0.5','1').replace('0.3','1')),
+      borderWidth: 1,
+    }]
+  },
+  options: {
+    responsive: true,
+    scales: {
+      y: { min: 0, max: 100, ticks: { callback: v => v + '%' } }
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const r = historyData[ctx.dataIndex];
+            let s = `${r.lifts_open}/${r.lifts_total} lifts (${ctx.parsed.y?.toFixed(0)}%)`;
+            if (r.holiday_name) s += ` 🏫 ${r.holiday_name}`;
+            return s;
+          }
+        }
+      }
+    }
+  }
+});
+</script>
+</body>
+</html>
