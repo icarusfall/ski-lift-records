@@ -38,8 +38,8 @@
     "country": "FR",
     "area": "Les 3 Vallées",
     "top_altitude_m": 2850,
-    "scraper": "bergfex",
-    "primary_url": null,
+    "scraper": "lesmenuires",
+    "primary_url": "https://lesmenuires.com/en/live",
     "bergfex_slug": "les-menuires"
   },
   {
@@ -69,10 +69,9 @@
     "country": "FR",
     "area": "Les 3 Vallées",
     "top_altitude_m": 2850,
-    "scraper": "bergfex",
-    "primary_url": null,
-    "bergfex_slug": "saint-martin-de-belleville",
-    "notes": "Often reports 0 lifts - data quality TBC"
+    "scraper": "lesmenuires",
+    "primary_url": "https://lesmenuires.com/en/live",
+    "bergfex_slug": "saint-martin-de-belleville"
   },
   {
     "id": "tignes",
