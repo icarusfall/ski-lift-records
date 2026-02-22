@@ -193,10 +193,10 @@
     "country": "AT",
     "area": "Arlberg",
     "top_altitude_m": 2811,
-    "scraper": "bergfex",
-    "primary_url": "https://www.stantonamarlberg.com/en/winter/ski-resort/ski-area-information",
+    "scraper": "skiarlberg",
+    "primary_url": "https://www.skiarlberg.at/en/st-anton/live-info/cable-cars-lifts",
     "bergfex_slug": "stanton-stchristoph",
-    "notes": "Includes St Christoph and Stuben"
+    "notes": "Includes St Christoph and Stuben; skiarlberg.at regionId=164"
   },
   {
     "id": "lech-zuers",
@@ -204,10 +204,10 @@
     "country": "AT",
     "area": "Arlberg",
     "top_altitude_m": 2450,
-    "scraper": "bergfex",
-    "primary_url": null,
+    "scraper": "skiarlberg",
+    "primary_url": "https://www.skiarlberg.at/en/lech-zuers/live-info/cable-cars-lifts",
     "bergfex_slug": "lech-zuers-arlberg",
-    "notes": "Now lift-linked to St Anton; different wind exposure profile"
+    "notes": "Now lift-linked to St Anton; different wind exposure profile; skiarlberg.at regionId=4"
   },
   {
     "id": "ischgl",
