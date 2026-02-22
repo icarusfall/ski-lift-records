@@ -48,10 +48,10 @@
     "country": "FR",
     "area": "Les 3 Vallées",
     "top_altitude_m": 2952,
-    "scraper": "lumiplan",
-    "primary_url": "https://www.seemeribel.com/lifts/status",
+    "scraper": "les3vallees",
+    "primary_url": "https://www.les3vallees.com/en/live/lifts-and-trails-opening",
     "bergfex_slug": "meribel",
-    "notes": "Includes Méribel-Mottaret"
+    "notes": "Includes Méribel-Mottaret; les3vallees gives 42 lifts vs 30 from lumiplan"
   },
   {
     "id": "courchevel",
@@ -59,8 +59,8 @@
     "country": "FR",
     "area": "Les 3 Vallées",
     "top_altitude_m": 2738,
-    "scraper": "bergfex",
-    "primary_url": null,
+    "scraper": "les3vallees",
+    "primary_url": "https://www.les3vallees.com/en/live/lifts-and-trails-opening",
     "bergfex_slug": "courchevel"
   },
   {
