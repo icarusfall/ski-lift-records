@@ -111,8 +111,8 @@
     "country": "FR",
     "area": "Paradiski",
     "top_altitude_m": 3250,
-    "scraper": "bergfex",
-    "primary_url": null,
+    "scraper": "laplagne",
+    "primary_url": "https://en.la-plagne.com/discover/ski-area/piste-map",
     "bergfex_slug": "la-plagne"
   },
   {
