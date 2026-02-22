@@ -101,8 +101,8 @@
     "country": "FR",
     "area": "Paradiski",
     "top_altitude_m": 3226,
-    "scraper": "bergfex",
-    "primary_url": null,
+    "scraper": "kgpistes",
+    "primary_url": "https://en.lesarcs.com/lifts-slopes-status",
     "bergfex_slug": "les-arcs-bourg-saint-maurice"
   },
   {
