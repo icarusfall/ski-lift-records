@@ -18,21 +18,25 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                 (resort_id, snapshot_time, snapshot_date,
                  lifts_open, lifts_total, pct_lifts_open,
                  pistes_open_km, pistes_total_km,
-                 source, is_uk_school_holiday, holiday_name, scrape_error)
+                 source, is_uk_school_holiday, holiday_name, scrape_error,
+                 snow_depth_mountain_cm, snow_depth_valley_cm)
             VALUES
                 (%(resort_id)s, %(now)s, %(date)s,
                  %(lifts_open)s, %(lifts_total)s, %(pct_open)s,
                  %(pistes_open_km)s, %(pistes_total_km)s,
-                 %(source)s, %(is_hol)s, %(hol_name)s, %(error)s)
+                 %(source)s, %(is_hol)s, %(hol_name)s, %(error)s,
+                 %(snow_mountain)s, %(snow_valley)s)
             ON CONFLICT (resort_id, snapshot_date) DO UPDATE SET
-                snapshot_time   = EXCLUDED.snapshot_time,
-                lifts_open      = EXCLUDED.lifts_open,
-                lifts_total     = EXCLUDED.lifts_total,
-                pct_lifts_open  = EXCLUDED.pct_lifts_open,
-                pistes_open_km  = EXCLUDED.pistes_open_km,
-                pistes_total_km = EXCLUDED.pistes_total_km,
-                source          = EXCLUDED.source,
-                scrape_error    = EXCLUDED.scrape_error
+                snapshot_time          = EXCLUDED.snapshot_time,
+                lifts_open             = EXCLUDED.lifts_open,
+                lifts_total            = EXCLUDED.lifts_total,
+                pct_lifts_open         = EXCLUDED.pct_lifts_open,
+                pistes_open_km         = EXCLUDED.pistes_open_km,
+                pistes_total_km        = EXCLUDED.pistes_total_km,
+                source                 = EXCLUDED.source,
+                scrape_error           = EXCLUDED.scrape_error,
+                snow_depth_mountain_cm = EXCLUDED.snow_depth_mountain_cm,
+                snow_depth_valley_cm   = EXCLUDED.snow_depth_valley_cm
             RETURNING id
         """, {
             "resort_id":     snap.resort_id,
@@ -47,6 +51,8 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
             "is_hol":        is_hol,
             "hol_name":      hol_name,
             "error":         snap.error,
+            "snow_mountain": snap.snow_depth_mountain_cm,
+            "snow_valley":   snap.snow_depth_valley_cm,
         })
         row = cur.fetchone()
         if row is None:

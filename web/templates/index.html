@@ -107,6 +107,11 @@
           {% if row.pistes_open_km %}
             {{ row.pistes_open_km }} / {{ row.pistes_total_km }} km
           {% else %}—{% endif %}
+          {% if row.snow_depth_mountain_cm or row.snow_depth_valley_cm %}
+            <br><span style="font-size:0.75rem; color:#718096;">
+              top {{ row.snow_depth_mountain_cm }}cm / valley {{ row.snow_depth_valley_cm }}cm
+            </span>
+          {% endif %}
         </td>
         <td style="font-size:0.75rem; color:#718096;">{{ row.source }}</td>
       </tr>

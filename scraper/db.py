@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
     is_uk_school_holiday    BOOLEAN DEFAULT FALSE,
     holiday_name    VARCHAR(100),
     scrape_error    TEXT,
+    snow_depth_mountain_cm  INTEGER,
+    snow_depth_valley_cm    INTEGER,
     created_at      TIMESTAMP DEFAULT NOW(),
     UNIQUE (resort_id, snapshot_date)
 );
@@ -97,6 +99,9 @@ CREATE TABLE IF NOT EXISTS piste_readings (
 CREATE INDEX IF NOT EXISTS idx_snapshots_resort_date ON snapshots (resort_id, snapshot_date DESC);
 CREATE INDEX IF NOT EXISTS idx_lift_readings_snapshot ON lift_readings (snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_piste_readings_snapshot ON piste_readings (snapshot_id);
+
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS snow_depth_mountain_cm INTEGER;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS snow_depth_valley_cm INTEGER;
 """
 
 

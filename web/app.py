@@ -33,6 +33,8 @@ def get_latest_snapshots():
                 s.pct_lifts_open,
                 s.pistes_open_km,
                 s.pistes_total_km,
+                s.snow_depth_mountain_cm,
+                s.snow_depth_valley_cm,
                 s.source,
                 s.is_uk_school_holiday,
                 s.holiday_name,
@@ -53,6 +55,8 @@ def get_history(resort_id: str, days: int = 60):
     with cursor() as cur:
         cur.execute("""
             SELECT snapshot_date, lifts_open, lifts_total, pct_lifts_open,
+                   pistes_open_km, pistes_total_km,
+                   snow_depth_mountain_cm, snow_depth_valley_cm,
                    is_uk_school_holiday, holiday_name
             FROM snapshots
             WHERE resort_id = %s

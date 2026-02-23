@@ -50,6 +50,15 @@ def _parse_count(html: str, heading: str) -> tuple[int | None, int | None]:
     return None, None
 
 
+def _parse_snow_depth(html: str) -> tuple[int | None, int | None]:
+    """Extract mountain/valley snow depth in cm from bergfex page."""
+    m_match = re.search(r'Mountain:</span>\s*<span[^>]*>(\d+)\s*cm</span>', html)
+    v_match = re.search(r'Valley:</span>\s*<span[^>]*>(\d+)\s*cm</span>', html)
+    mountain = int(m_match.group(1)) if m_match else None
+    valley = int(v_match.group(1)) if v_match else None
+    return mountain, valley
+
+
 def _parse_km(html: str) -> tuple[float | None, float | None]:
     """Extract open km / total km from the pistes section."""
     # bergfex shows km as decimal: "127.0 / 185.5 km"
@@ -90,7 +99,24 @@ def scrape(resort_id: str, bergfex_slug: str) -> ResortSnapshot:
     snapshot.pistes_open_km = open_km
     snapshot.pistes_total_km = total_km
 
+    # Snow depth
+    mountain, valley = _parse_snow_depth(html)
+    snapshot.snow_depth_mountain_cm = mountain
+    snapshot.snow_depth_valley_cm = valley
+
     if open_lifts is None:
         snapshot.error = "Could not parse lift counts from bergfex page"
 
     return snapshot
+
+
+def get_snow_depth(bergfex_slug: str) -> tuple[int | None, int | None]:
+    """Fetch bergfex page for a resort and return (mountain_cm, valley_cm)."""
+    _rate_limit()
+    url = f"{BASE_URL}/{bergfex_slug}/"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=20)
+        resp.raise_for_status()
+        return _parse_snow_depth(resp.text)
+    except Exception:
+        return None, None

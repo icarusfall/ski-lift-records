@@ -26,6 +26,8 @@ class ResortSnapshot:
     pistes: list[PisteStatus] = field(default_factory=list)
     pistes_open_km: Optional[float] = None
     pistes_total_km: Optional[float] = None
+    snow_depth_mountain_cm: Optional[int] = None
+    snow_depth_valley_cm: Optional[int] = None
     error: Optional[str] = None
 
     @property
