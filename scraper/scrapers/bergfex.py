@@ -42,7 +42,7 @@ def _rate_limit():
 def _parse_count(html: str, heading: str) -> tuple[int | None, int | None]:
     """Extract open/total integers from an 'X / Y' block below a heading."""
     block_match = re.search(
-        re.escape(heading) + r'.*?tw-text-6xl[^>]*>([0-9]+)<.*?tw-text-m[^>]*/\s*([0-9]+)<',
+        re.escape(heading) + r'.*?tw-text-6xl[^>]*>([0-9]+)<.*?tw-text-m[^>]*>/\s*([0-9]+)<',
         html, re.DOTALL
     )
     if block_match:
@@ -54,7 +54,7 @@ def _parse_km(html: str) -> tuple[float | None, float | None]:
     """Extract open km / total km from the pistes section."""
     # bergfex shows km as decimal: "127.0 / 185.5 km"
     m = re.search(
-        r'Open pistes.*?tw-text-6xl[^>]*>([0-9]+\.?[0-9]*)<.*?tw-text-m[^>]*/\s*([0-9]+\.?[0-9]*)',
+        r'Open pistes.*?tw-text-6xl[^>]*>([0-9]+\.?[0-9]*)<.*?tw-text-m[^>]*>/\s*([0-9]+\.?[0-9]*)',
         html, re.DOTALL
     )
     if m:

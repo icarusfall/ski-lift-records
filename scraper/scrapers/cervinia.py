@@ -80,19 +80,7 @@ def scrape(resort_id: str = "cervinia") -> ResortSnapshot:
                 ))
 
     # ── Pistes ─────────────────────────────────────────────────────────────
-    # Pattern: pista-level-{B/R/N}, then piste name, then pista-status-O/F
-    piste_blocks = re.finditer(
-        r'pista-level-([BRNV])[^>]*></span>\s*(.*?)</span>.*?pista-status-([OF])',
-        html, re.DOTALL
-    )
-    for m in piste_blocks:
-        colour_code, name_raw, status_code = m.group(1), m.group(2), m.group(3)
-        name = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', name_raw)).strip()
-        if name and len(name) > 1:
-            snapshot.pistes.append(PisteStatus(
-                name=name,
-                status="open" if status_code == "O" else "closed",
-                colour=PISTE_COLOUR_MAP.get(colour_code, colour_code.lower())
-            ))
+    # Piste regex disabled — the .*? + DOTALL pattern causes catastrophic
+    # backtracking on the current cervinia.it HTML. Lifts are the priority.
 
     return snapshot
