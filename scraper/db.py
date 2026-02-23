@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS snapshots (
     scrape_error    TEXT,
     snow_depth_mountain_cm  INTEGER,
     snow_depth_valley_cm    INTEGER,
+    snow_condition          VARCHAR(100),
+    last_snowfall_date      DATE,
+    piste_conditions        VARCHAR(50),
+    avalanche_danger        SMALLINT,
     created_at      TIMESTAMP DEFAULT NOW(),
     UNIQUE (resort_id, snapshot_date)
 );
@@ -102,6 +106,10 @@ CREATE INDEX IF NOT EXISTS idx_piste_readings_snapshot ON piste_readings (snapsh
 
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS snow_depth_mountain_cm INTEGER;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS snow_depth_valley_cm INTEGER;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS snow_condition VARCHAR(100);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS last_snowfall_date DATE;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS piste_conditions VARCHAR(50);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS avalanche_danger SMALLINT;
 """
 
 

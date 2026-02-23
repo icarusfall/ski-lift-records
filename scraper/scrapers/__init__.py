@@ -37,10 +37,14 @@ def run_scraper(resort: dict) -> ResortSnapshot:
         fallback.source = f"bergfex.com (fallback from {scraper_type})"
         return fallback
 
-    # Fetch snow depth from bergfex for primary-scraped resorts
+    # Fetch snow/conditions data from bergfex schneebericht for primary-scraped resorts
     if resort.get("bergfex_slug"):
-        m, v = bergfex.get_snow_depth(resort["bergfex_slug"])
-        snap.snow_depth_mountain_cm = m
-        snap.snow_depth_valley_cm = v
+        snow = bergfex.get_snow_report(resort["bergfex_slug"])
+        snap.snow_depth_mountain_cm = snow.get("snow_depth_mountain_cm")
+        snap.snow_depth_valley_cm   = snow.get("snow_depth_valley_cm")
+        snap.snow_condition         = snow.get("snow_condition")
+        snap.last_snowfall_date     = snow.get("last_snowfall_date")
+        snap.piste_conditions       = snow.get("piste_conditions")
+        snap.avalanche_danger       = snow.get("avalanche_danger")
 
     return snap

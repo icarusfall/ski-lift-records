@@ -110,6 +110,7 @@
           {% if row.snow_depth_mountain_cm or row.snow_depth_valley_cm %}
             <br><span style="font-size:0.75rem; color:#718096;">
               top {{ row.snow_depth_mountain_cm }}cm / valley {{ row.snow_depth_valley_cm }}cm
+              {% if row.last_snowfall_date %} · last snow {{ row.last_snowfall_date }}{% endif %}
             </span>
           {% endif %}
         </td>

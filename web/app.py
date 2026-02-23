@@ -35,6 +35,10 @@ def get_latest_snapshots():
                 s.pistes_total_km,
                 s.snow_depth_mountain_cm,
                 s.snow_depth_valley_cm,
+                s.snow_condition,
+                s.last_snowfall_date,
+                s.piste_conditions,
+                s.avalanche_danger,
                 s.source,
                 s.is_uk_school_holiday,
                 s.holiday_name,
@@ -57,6 +61,7 @@ def get_history(resort_id: str, days: int = 60):
             SELECT snapshot_date, lifts_open, lifts_total, pct_lifts_open,
                    pistes_open_km, pistes_total_km,
                    snow_depth_mountain_cm, snow_depth_valley_cm,
+                   snow_condition, last_snowfall_date, piste_conditions, avalanche_danger,
                    is_uk_school_holiday, holiday_name
             FROM snapshots
             WHERE resort_id = %s

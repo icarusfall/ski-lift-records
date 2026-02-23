@@ -1,5 +1,6 @@
 """Base scraper interface."""
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Optional
 
 
@@ -28,6 +29,10 @@ class ResortSnapshot:
     pistes_total_km: Optional[float] = None
     snow_depth_mountain_cm: Optional[int] = None
     snow_depth_valley_cm: Optional[int] = None
+    snow_condition: Optional[str] = None
+    last_snowfall_date: Optional[date] = None
+    piste_conditions: Optional[str] = None
+    avalanche_danger: Optional[int] = None   # 1–5 European danger scale
     error: Optional[str] = None
 
     @property

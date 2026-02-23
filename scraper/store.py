@@ -19,13 +19,15 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                  lifts_open, lifts_total, pct_lifts_open,
                  pistes_open_km, pistes_total_km,
                  source, is_uk_school_holiday, holiday_name, scrape_error,
-                 snow_depth_mountain_cm, snow_depth_valley_cm)
+                 snow_depth_mountain_cm, snow_depth_valley_cm,
+                 snow_condition, last_snowfall_date, piste_conditions, avalanche_danger)
             VALUES
                 (%(resort_id)s, %(now)s, %(date)s,
                  %(lifts_open)s, %(lifts_total)s, %(pct_open)s,
                  %(pistes_open_km)s, %(pistes_total_km)s,
                  %(source)s, %(is_hol)s, %(hol_name)s, %(error)s,
-                 %(snow_mountain)s, %(snow_valley)s)
+                 %(snow_mountain)s, %(snow_valley)s,
+                 %(snow_condition)s, %(last_snowfall_date)s, %(piste_conditions)s, %(avalanche_danger)s)
             ON CONFLICT (resort_id, snapshot_date) DO UPDATE SET
                 snapshot_time          = EXCLUDED.snapshot_time,
                 lifts_open             = EXCLUDED.lifts_open,
@@ -36,7 +38,11 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                 source                 = EXCLUDED.source,
                 scrape_error           = EXCLUDED.scrape_error,
                 snow_depth_mountain_cm = EXCLUDED.snow_depth_mountain_cm,
-                snow_depth_valley_cm   = EXCLUDED.snow_depth_valley_cm
+                snow_depth_valley_cm   = EXCLUDED.snow_depth_valley_cm,
+                snow_condition         = EXCLUDED.snow_condition,
+                last_snowfall_date     = EXCLUDED.last_snowfall_date,
+                piste_conditions       = EXCLUDED.piste_conditions,
+                avalanche_danger       = EXCLUDED.avalanche_danger
             RETURNING id
         """, {
             "resort_id":     snap.resort_id,
@@ -51,8 +57,12 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
             "is_hol":        is_hol,
             "hol_name":      hol_name,
             "error":         snap.error,
-            "snow_mountain": snap.snow_depth_mountain_cm,
-            "snow_valley":   snap.snow_depth_valley_cm,
+            "snow_mountain":       snap.snow_depth_mountain_cm,
+            "snow_valley":         snap.snow_depth_valley_cm,
+            "snow_condition":      snap.snow_condition,
+            "last_snowfall_date":  snap.last_snowfall_date,
+            "piste_conditions":    snap.piste_conditions,
+            "avalanche_danger":    snap.avalanche_danger,
         })
         row = cur.fetchone()
         if row is None:
