@@ -76,7 +76,7 @@ def get_lift_history(resort_id: str, days: int = 60):
             JOIN snapshots s ON s.id = lr.snapshot_id
             WHERE l.resort_id = %s
               AND s.snapshot_date >= CURRENT_DATE - %s
-              AND NOT l.name LIKE 'lift\\_%'
+              AND NOT l.name LIKE 'lift\\_%%'
             ORDER BY l.name, s.snapshot_date
         """, (resort_id, days))
         return cur.fetchall()
