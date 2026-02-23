@@ -1,3 +1,8 @@
+# Web service config (gunicorn).
+# The daily collector cron must be added as a SEPARATE service in the
+# Railway dashboard: Start Command = "python -m scraper.collect",
+# Cron Schedule = "0 12 * * *", with DATABASE_URL variable set.
+
 [build]
 builder = "nixpacks"
 
@@ -5,12 +10,3 @@ builder = "nixpacks"
 startCommand = "gunicorn -w 2 -b 0.0.0.0:$PORT web.app:app"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-
-[[services]]
-name = "web"
-
-[[services]]
-name = "collector"
-startCommand = "python -m scraper.collect"
-# Railway cron syntax: runs daily at 12:00 UTC
-cronSchedule = "0 12 * * *"
