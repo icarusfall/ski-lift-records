@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
     last_snowfall_date      DATE,
     piste_conditions        VARCHAR(50),
     avalanche_danger        SMALLINT,
+    wind_gust_max_kmh      NUMERIC(5,1),
+    wind_speed_max_kmh     NUMERIC(5,1),
+    temp_min_c             NUMERIC(4,1),
+    temp_max_c             NUMERIC(4,1),
+    fresh_snow_cm          NUMERIC(5,1),
+    precipitation_mm       NUMERIC(5,1),
+    weather_code           SMALLINT,
     created_at      TIMESTAMP DEFAULT NOW(),
     UNIQUE (resort_id, snapshot_date)
 );
@@ -110,6 +117,13 @@ ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS snow_condition VARCHAR(100);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS last_snowfall_date DATE;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS piste_conditions VARCHAR(50);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS avalanche_danger SMALLINT;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS wind_gust_max_kmh NUMERIC(5,1);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS wind_speed_max_kmh NUMERIC(5,1);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS temp_min_c NUMERIC(4,1);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS temp_max_c NUMERIC(4,1);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS fresh_snow_cm NUMERIC(5,1);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS precipitation_mm NUMERIC(5,1);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS weather_code SMALLINT;
 """
 
 

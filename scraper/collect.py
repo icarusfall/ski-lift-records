@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from .db import init_db, upsert_resort
 from .scrapers import run_scraper
 from .store import save_snapshot
+from .weather import fetch_weather
 
 RESORTS_FILE = Path(__file__).parent.parent / "config" / "resorts.json"
 
@@ -44,6 +45,19 @@ def collect_all(resort_filter: str | None = None):
         print(f"  [{resort['id']}] {resort['name']} ({resort['scraper']})...")
         try:
             snap = run_scraper(resort)
+
+            # Fetch weather from Open-Meteo
+            if resort.get("latitude") and resort.get("longitude"):
+                weather = fetch_weather(resort["latitude"], resort["longitude"],
+                                        resort.get("top_altitude_m"))
+                snap.wind_gust_max_kmh  = weather.get("wind_gust_max_kmh")
+                snap.wind_speed_max_kmh = weather.get("wind_speed_max_kmh")
+                snap.temp_min_c         = weather.get("temp_min_c")
+                snap.temp_max_c         = weather.get("temp_max_c")
+                snap.fresh_snow_cm      = weather.get("fresh_snow_cm")
+                snap.precipitation_mm   = weather.get("precipitation_mm")
+                snap.weather_code       = weather.get("weather_code")
+
             snapshot_id = save_snapshot(snap, today)
 
             if snap.error:

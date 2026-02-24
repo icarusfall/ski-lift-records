@@ -33,6 +33,13 @@ class ResortSnapshot:
     last_snowfall_date: Optional[date] = None
     piste_conditions: Optional[str] = None
     avalanche_danger: Optional[int] = None   # 1–5 European danger scale
+    wind_gust_max_kmh: Optional[float] = None
+    wind_speed_max_kmh: Optional[float] = None
+    temp_min_c: Optional[float] = None
+    temp_max_c: Optional[float] = None
+    fresh_snow_cm: Optional[float] = None
+    precipitation_mm: Optional[float] = None
+    weather_code: Optional[int] = None
     error: Optional[str] = None
 
     @property

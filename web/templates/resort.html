@@ -83,7 +83,9 @@
         <tr>
           <th>Date</th><th>Open</th><th>Total</th><th>%</th>
           <th>Pistes Open km</th><th>Snow top</th><th>Snow valley</th>
-          <th>Condition</th><th>Last snow</th><th>Piste cond.</th><th>Aval.</th><th>Holiday</th>
+          <th>Condition</th><th>Last snow</th><th>Piste cond.</th><th>Aval.</th>
+          <th>Wind gust</th><th>Temp</th><th>Fresh snow</th>
+          <th>Holiday</th>
         </tr>
       </thead>
       <tbody>
@@ -100,6 +102,9 @@
           <td>{{ row.last_snowfall_date or "—" }}</td>
           <td>{{ row.piste_conditions or "—" }}</td>
           <td>{{ row.avalanche_danger or "—" }}</td>
+          <td>{{ (row.wind_gust_max_kmh ~ " km/h") if row.wind_gust_max_kmh else "—" }}</td>
+          <td>{{ (row.temp_min_c ~ "° / " ~ row.temp_max_c ~ "°") if row.temp_min_c is not none else "—" }}</td>
+          <td>{{ (row.fresh_snow_cm ~ " cm") if row.fresh_snow_cm else "—" }}</td>
           <td>{{ row.holiday_name or "" }}</td>
         </tr>
       {% endfor %}

@@ -39,6 +39,13 @@ def get_latest_snapshots():
                 s.last_snowfall_date,
                 s.piste_conditions,
                 s.avalanche_danger,
+                s.wind_gust_max_kmh,
+                s.wind_speed_max_kmh,
+                s.temp_min_c,
+                s.temp_max_c,
+                s.fresh_snow_cm,
+                s.precipitation_mm,
+                s.weather_code,
                 s.source,
                 s.is_uk_school_holiday,
                 s.holiday_name,
@@ -62,6 +69,9 @@ def get_history(resort_id: str, days: int = 60):
                    pistes_open_km, pistes_total_km,
                    snow_depth_mountain_cm, snow_depth_valley_cm,
                    snow_condition, last_snowfall_date, piste_conditions, avalanche_danger,
+                   wind_gust_max_kmh, wind_speed_max_kmh,
+                   temp_min_c, temp_max_c,
+                   fresh_snow_cm, precipitation_mm, weather_code,
                    is_uk_school_holiday, holiday_name
             FROM snapshots
             WHERE resort_id = %s

@@ -20,14 +20,20 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                  pistes_open_km, pistes_total_km,
                  source, is_uk_school_holiday, holiday_name, scrape_error,
                  snow_depth_mountain_cm, snow_depth_valley_cm,
-                 snow_condition, last_snowfall_date, piste_conditions, avalanche_danger)
+                 snow_condition, last_snowfall_date, piste_conditions, avalanche_danger,
+                 wind_gust_max_kmh, wind_speed_max_kmh,
+                 temp_min_c, temp_max_c,
+                 fresh_snow_cm, precipitation_mm, weather_code)
             VALUES
                 (%(resort_id)s, %(now)s, %(date)s,
                  %(lifts_open)s, %(lifts_total)s, %(pct_open)s,
                  %(pistes_open_km)s, %(pistes_total_km)s,
                  %(source)s, %(is_hol)s, %(hol_name)s, %(error)s,
                  %(snow_mountain)s, %(snow_valley)s,
-                 %(snow_condition)s, %(last_snowfall_date)s, %(piste_conditions)s, %(avalanche_danger)s)
+                 %(snow_condition)s, %(last_snowfall_date)s, %(piste_conditions)s, %(avalanche_danger)s,
+                 %(wind_gust)s, %(wind_speed)s,
+                 %(temp_min)s, %(temp_max)s,
+                 %(fresh_snow)s, %(precipitation)s, %(weather_code)s)
             ON CONFLICT (resort_id, snapshot_date) DO UPDATE SET
                 snapshot_time          = EXCLUDED.snapshot_time,
                 lifts_open             = EXCLUDED.lifts_open,
@@ -42,7 +48,14 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                 snow_condition         = EXCLUDED.snow_condition,
                 last_snowfall_date     = EXCLUDED.last_snowfall_date,
                 piste_conditions       = EXCLUDED.piste_conditions,
-                avalanche_danger       = EXCLUDED.avalanche_danger
+                avalanche_danger       = EXCLUDED.avalanche_danger,
+                wind_gust_max_kmh      = EXCLUDED.wind_gust_max_kmh,
+                wind_speed_max_kmh     = EXCLUDED.wind_speed_max_kmh,
+                temp_min_c             = EXCLUDED.temp_min_c,
+                temp_max_c             = EXCLUDED.temp_max_c,
+                fresh_snow_cm          = EXCLUDED.fresh_snow_cm,
+                precipitation_mm       = EXCLUDED.precipitation_mm,
+                weather_code           = EXCLUDED.weather_code
             RETURNING id
         """, {
             "resort_id":     snap.resort_id,
@@ -63,6 +76,13 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
             "last_snowfall_date":  snap.last_snowfall_date,
             "piste_conditions":    snap.piste_conditions,
             "avalanche_danger":    snap.avalanche_danger,
+            "wind_gust":           snap.wind_gust_max_kmh,
+            "wind_speed":          snap.wind_speed_max_kmh,
+            "temp_min":            snap.temp_min_c,
+            "temp_max":            snap.temp_max_c,
+            "fresh_snow":          snap.fresh_snow_cm,
+            "precipitation":       snap.precipitation_mm,
+            "weather_code":        snap.weather_code,
         })
         row = cur.fetchone()
         if row is None:
