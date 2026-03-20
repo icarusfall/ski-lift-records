@@ -12,7 +12,7 @@ import sys
 # Allow importing scraper package from parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from flask import Flask, jsonify, render_template, Response
+from flask import Flask, jsonify, render_template, request, Response
 from scraper.db import cursor
 
 app = Flask(__name__)
@@ -109,12 +109,15 @@ def index():
 
 @app.route("/resort/<resort_id>")
 def resort_detail(resort_id: str):
-    history = get_history(resort_id)
-    lift_history = get_lift_history(resort_id)
+    days = request.args.get("days", 20, type=int)
+    days = max(1, min(days, 365))
+    history = get_history(resort_id, days)
+    lift_history = get_lift_history(resort_id, days)
     return render_template("resort.html",
                            resort_id=resort_id,
                            history=history,
-                           lift_history=lift_history)
+                           lift_history=lift_history,
+                           days=days)
 
 
 @app.route("/api/snapshots.json")

@@ -22,6 +22,9 @@
   .closed { color: #c53030; }
   .link-lift { background: #ebf8ff; }
   .hol { background: #fffbeb; }
+  .days-picker { margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
+  .days-picker a { text-decoration: none; padding: 0.3rem 0.7rem; border-radius: 4px; background: #e2e8f0; color: #2d3748; }
+  .days-picker a.active { background: #2b6cb0; color: white; }
 </style>
 </head>
 <body>
@@ -31,9 +34,16 @@
 </header>
 <div class="container">
 
+  <div class="days-picker">
+    Show:
+    {% for d in [7, 14, 20, 30, 60, 90] %}
+      <a href="?days={{ d }}" class="{{ 'active' if days == d else '' }}">{{ d }}d</a>
+    {% endfor %}
+  </div>
+
   <!-- % Open over time chart -->
   <div class="card">
-    <h2>Lifts Open (%) — last 60 days</h2>
+    <h2>Lifts Open (%) — last {{ days }} days</h2>
     <canvas id="pctChart"></canvas>
   </div>
 
