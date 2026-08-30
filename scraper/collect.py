@@ -119,8 +119,8 @@ def collect_all(resort_filter: str | None = None):
                 if snap.pistes_open_km:
                     status += f"   {snap.pistes_open_km}/{snap.pistes_total_km} km"
 
-            print(f"         {status}")
             results.append({"resort": resort["id"], "snap": snap, "id": snapshot_id})
+            print(f"         {status}")
 
         except Exception as e:
             print(f"         EXCEPTION: {e}")
@@ -134,6 +134,10 @@ def collect_all(resort_filter: str | None = None):
 
 
 def main():
+    # Windows consoles default to cp1252, which can't print the progress bars
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     args = sys.argv[1:]
 
     if "--init-db" in args:
