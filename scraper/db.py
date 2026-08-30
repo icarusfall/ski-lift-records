@@ -1,8 +1,15 @@
 """Database connection and schema management."""
 import os
+from pathlib import Path
 import psycopg2
 import psycopg2.extras
 from contextlib import contextmanager
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -124,7 +131,42 @@ ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS temp_max_c NUMERIC(4,1);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS fresh_snow_cm NUMERIC(5,1);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS precipitation_mm NUMERIC(5,1);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS weather_code SMALLINT;
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key         VARCHAR(50) PRIMARY KEY,
+    value       TEXT,
+    updated_at  TIMESTAMP DEFAULT NOW()
+);
+
+ALTER TABLE resorts ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
 """
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with cursor() as cur:
+        cur.execute("SELECT value FROM app_settings WHERE key = %s", (key,))
+        row = cur.fetchone()
+        return row["value"] if row and row["value"] else default
+
+
+def set_setting(key: str, value: str):
+    with cursor() as cur:
+        cur.execute("""
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+        """, (key, value))
+
+
+def get_disabled_resorts() -> set[str]:
+    with cursor() as cur:
+        cur.execute("SELECT id FROM resorts WHERE enabled = FALSE")
+        return {row["id"] for row in cur.fetchall()}
+
+
+def set_resort_enabled(resort_id: str, enabled: bool):
+    with cursor() as cur:
+        cur.execute("UPDATE resorts SET enabled = %s WHERE id = %s", (enabled, resort_id))
 
 
 def init_db():

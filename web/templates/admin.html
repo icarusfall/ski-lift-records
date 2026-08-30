@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — Ski Lift Tracker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f0f4f8; color: #1a202c; }
+  header { background: #2d3748; color: white; padding: 1rem 2rem;
+           display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.4rem; }
+  header a { color: #90cdf4; font-size: 0.85rem; text-decoration: none; }
+  .container { max-width: 1200px; margin: 1.5rem auto; padding: 0 1rem; }
+  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
+          padding: 1.2rem 1.5rem; margin-bottom: 1.5rem; }
+  .card h2 { font-size: 1rem; margin-bottom: 0.8rem; color: #2d3748; }
+  .flash { background: #ebf8ff; border-left: 4px solid #2b6cb0; padding: 0.6rem 1rem;
+           margin-bottom: 1rem; font-size: 0.85rem; border-radius: 0 4px 4px 0; }
+  .status-badge { display: inline-block; padding: 0.25rem 0.9rem; border-radius: 999px;
+                  font-weight: 700; font-size: 0.9rem; }
+  .status-active { background: #c6f6d5; color: #22543d; }
+  .status-paused { background: #fed7d7; color: #742a2a; }
+  button { background: #2b6cb0; color: white; border: none; border-radius: 5px;
+           padding: 0.4rem 0.9rem; font-size: 0.82rem; cursor: pointer; }
+  button:hover { background: #2c5282; }
+  button.danger { background: #c53030; }
+  button.danger:hover { background: #9b2c2c; }
+  button.subtle { background: #edf2f7; color: #2d3748; }
+  button.subtle:hover { background: #e2e8f0; }
+  input[type="date"], input[type="password"] {
+      padding: 0.35rem 0.5rem; border: 1px solid #cbd5e0; border-radius: 5px;
+      font-size: 0.85rem; }
+  form.inline { display: inline; }
+  .row { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: flex-end; }
+  .field label { display: block; font-size: 0.75rem; color: #718096; margin-bottom: 0.2rem; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #2d3748; color: white; padding: 0.5rem 0.7rem;
+       text-align: left; font-size: 0.78rem; white-space: nowrap; }
+  td { padding: 0.45rem 0.7rem; border-bottom: 1px solid #e2e8f0; font-size: 0.83rem; }
+  tr:last-child td { border-bottom: none; }
+  tr.disabled td { opacity: 0.45; }
+  .err { color: #c53030; font-size: 0.78rem; }
+  .ok  { color: #2f855a; }
+  .stale { color: #b7791f; }
+  .muted { color: #718096; font-size: 0.78rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎛 Control Panel</h1>
+  <a href="/">← Dashboard</a>
+</header>
+<div class="container">
+
+  {% with messages = get_flashed_messages() %}
+    {% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}
+  {% endwith %}
+
+  {% if setup_needed %}
+    <div class="card">
+      <h2>Admin panel not configured</h2>
+      <p class="muted">Set an <code>ADMIN_TOKEN</code> environment variable on the web
+      service, then reload this page.</p>
+    </div>
+
+  {% elif login_needed %}
+    <div class="card">
+      <h2>Log in</h2>
+      <form method="post" action="/admin/login" class="row">
+        <div class="field">
+          <label>Admin token</label>
+          <input type="password" name="token" autofocus>
+        </div>
+        <button type="submit">Log in</button>
+      </form>
+    </div>
+
+  {% else %}
+    <div class="card">
+      <h2>Daily collection</h2>
+      <div class="row" style="align-items:center; margin-bottom:1rem;">
+        <span class="status-badge {{ 'status-paused' if paused else 'status-active' }}">
+          {{ "PAUSED" if paused else "ACTIVE" }}
+        </span>
+        <form method="post" action="/admin/pause" class="inline">
+          {% if paused %}
+            <input type="hidden" name="action" value="resume">
+            <button type="submit">▶ Resume collection</button>
+          {% else %}
+            <input type="hidden" name="action" value="pause">
+            <button type="submit" class="danger">⏸ Pause collection</button>
+          {% endif %}
+        </form>
+        <span class="muted">The Railway cron keeps firing daily; when paused it exits
+        without scraping. Today (UTC): {{ today }}</span>
+      </div>
+      <form method="post" action="/admin/schedule" class="row">
+        <div class="field">
+          <label>Auto-resume on (season start)</label>
+          <input type="date" name="auto_resume_date" value="{{ auto_resume_date }}">
+        </div>
+        <div class="field">
+          <label>Auto-pause on (season end)</label>
+          <input type="date" name="auto_pause_date" value="{{ auto_pause_date }}">
+        </div>
+        <button type="submit" class="subtle">Save schedule</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Resort health <span class="muted">— last snapshot per resort, errors over the
+        last 7 collected days</span></h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Resort</th><th>Scraper</th><th>Last snapshot</th><th>Lifts</th>
+            <th>Errors (7d)</th><th>Source</th><th></th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in health %}
+          <tr class="{{ '' if r.enabled else 'disabled' }}">
+            <td>{{ r.name }}</td>
+            <td class="muted">{{ r.scraper_type }}</td>
+            <td>
+              {% if r.last_date %}
+                {% set age = (today - r.last_date).days %}
+                <span class="{{ 'ok' if age <= 1 else 'stale' }}">{{ r.last_date }}</span>
+              {% else %}<span class="muted">never</span>{% endif %}
+            </td>
+            <td>
+              {% if r.scrape_error %}
+                <span class="err" title="{{ r.scrape_error }}">error</span>
+              {% elif r.lifts_total %}
+                {{ r.lifts_open }} / {{ r.lifts_total }}
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td>
+              {% if r.err_days and r.err_days > 0 %}
+                <span class="err">{{ r.err_days }}/7</span>
+              {% else %}<span class="ok">0/7</span>{% endif %}
+            </td>
+            <td class="muted">{{ r.source or "—" }}</td>
+            <td>
+              <form method="post" action="/admin/run/{{ r.id }}" class="inline">
+                <button type="submit" class="subtle">Run now</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/resort/{{ r.id }}/toggle" class="inline">
+                <input type="hidden" name="enable" value="{{ '0' if r.enabled else '1' }}">
+                <button type="submit" class="subtle">
+                  {{ "Disable" if r.enabled else "Enable" }}
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <form method="post" action="/admin/logout" class="inline">
+      <button type="submit" class="subtle">Log out</button>
+    </form>
+  {% endif %}
+
+</div>
+</body>
+</html>

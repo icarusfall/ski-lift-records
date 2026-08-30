@@ -4,18 +4,30 @@ Shows current status and historical trends per resort.
 """
 
 import csv
+import hashlib
+import hmac
 import io
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 # Allow importing scraper package from parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from flask import Flask, jsonify, render_template, request, Response
-from scraper.db import cursor
+from flask import (Flask, flash, jsonify, redirect, render_template,
+                   request, session, url_for, Response)
+from scraper.db import (cursor, get_setting, set_setting, set_resort_enabled)
 
 app = Flask(__name__)
+
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+# Sessions only need to outlive a deploy if the token does; deriving the
+# signing key from the token keeps logins valid across restarts.
+app.secret_key = (
+    hashlib.sha256(f"ski-lift-admin:{ADMIN_TOKEN}".encode()).digest()
+    if ADMIN_TOKEN else os.urandom(32)
+)
 
 
 def get_latest_snapshots():
@@ -165,6 +177,144 @@ def api_full_csv():
         writer.writerows(rows)
     return Response(output.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=ski-lift-history.csv"})
+
+
+# ---------------------------------------------------------------------------
+# Admin control panel
+# ---------------------------------------------------------------------------
+
+def is_admin() -> bool:
+    return bool(ADMIN_TOKEN) and session.get("admin") is True
+
+
+def get_resort_health():
+    """Per-resort status for the admin health board."""
+    with cursor() as cur:
+        cur.execute("""
+            SELECT r.id, r.name, r.enabled, r.scraper_type,
+                   ls.snapshot_date AS last_date,
+                   ls.lifts_open, ls.lifts_total, ls.source, ls.scrape_error,
+                   err.err_days
+            FROM resorts r
+            LEFT JOIN LATERAL (
+                SELECT * FROM snapshots s
+                WHERE s.resort_id = r.id
+                ORDER BY s.snapshot_date DESC LIMIT 1
+            ) ls ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS err_days FROM (
+                    SELECT s2.scrape_error FROM snapshots s2
+                    WHERE s2.resort_id = r.id
+                    ORDER BY s2.snapshot_date DESC LIMIT 7
+                ) t WHERE t.scrape_error IS NOT NULL
+            ) err ON TRUE
+            ORDER BY r.name
+        """)
+        return cur.fetchall()
+
+
+@app.route("/admin")
+def admin():
+    if not ADMIN_TOKEN:
+        return render_template("admin.html", setup_needed=True), 503
+    if not is_admin():
+        return render_template("admin.html", login_needed=True)
+
+    paused = get_setting("collection_paused", "false") == "true"
+    return render_template(
+        "admin.html",
+        paused=paused,
+        auto_resume_date=get_setting("auto_resume_date", "") or "",
+        auto_pause_date=get_setting("auto_pause_date", "") or "",
+        health=get_resort_health(),
+        today=datetime.now(timezone.utc).date(),
+    )
+
+
+@app.route("/admin/login", methods=["POST"])
+def admin_login():
+    token = request.form.get("token", "")
+    if ADMIN_TOKEN and hmac.compare_digest(token, ADMIN_TOKEN):
+        session["admin"] = True
+        session.permanent = True
+    else:
+        flash("Wrong token.")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/logout", methods=["POST"])
+def admin_logout():
+    session.pop("admin", None)
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/pause", methods=["POST"])
+def admin_pause():
+    if not is_admin():
+        return redirect(url_for("admin"))
+    action = request.form.get("action")
+    if action in ("pause", "resume"):
+        set_setting("collection_paused", "true" if action == "pause" else "false")
+        flash(f"Collection {'paused' if action == 'pause' else 'resumed'}.")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/schedule", methods=["POST"])
+def admin_schedule():
+    if not is_admin():
+        return redirect(url_for("admin"))
+    for field in ("auto_resume_date", "auto_pause_date"):
+        set_setting(field, request.form.get(field, "").strip())
+    flash("Season schedule saved.")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/resort/<resort_id>/toggle", methods=["POST"])
+def admin_toggle_resort(resort_id: str):
+    if not is_admin():
+        return redirect(url_for("admin"))
+    enable = request.form.get("enable") == "1"
+    set_resort_enabled(resort_id, enable)
+    flash(f"{resort_id} {'enabled' if enable else 'disabled'}.")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/run/<resort_id>", methods=["POST"])
+def admin_run_resort(resort_id: str):
+    if not is_admin():
+        return redirect(url_for("admin"))
+
+    from scraper.collect import load_resorts
+    from scraper.scrapers import run_scraper
+    from scraper.store import save_snapshot
+    from scraper.weather import fetch_weather
+
+    resort = next((r for r in load_resorts() if r["id"] == resort_id), None)
+    if resort is None:
+        flash(f"Unknown resort '{resort_id}'.")
+        return redirect(url_for("admin"))
+
+    try:
+        snap = run_scraper(resort)
+        if resort.get("latitude") and resort.get("longitude"):
+            weather = fetch_weather(resort["latitude"], resort["longitude"],
+                                    resort.get("top_altitude_m"))
+            snap.wind_gust_max_kmh  = weather.get("wind_gust_max_kmh")
+            snap.wind_speed_max_kmh = weather.get("wind_speed_max_kmh")
+            snap.temp_min_c         = weather.get("temp_min_c")
+            snap.temp_max_c         = weather.get("temp_max_c")
+            snap.fresh_snow_cm      = weather.get("fresh_snow_cm")
+            snap.precipitation_mm   = weather.get("precipitation_mm")
+            snap.weather_code       = weather.get("weather_code")
+        save_snapshot(snap)
+        if snap.error:
+            flash(f"{resort['name']}: scrape error — {snap.error}")
+        else:
+            flash(f"{resort['name']}: {snap.lifts_open}/{snap.lifts_total} lifts open "
+                  f"({snap.source}). Snapshot saved.")
+    except Exception as e:
+        flash(f"{resort['name']}: exception — {e}")
+    return redirect(url_for("admin"))
 
 
 if __name__ == "__main__":

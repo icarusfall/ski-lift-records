@@ -2,8 +2,9 @@
 Main collection script. Run daily (or on demand).
 
 Usage:
-    python -m scraper.collect              # run all resorts
-    python -m scraper.collect cervinia     # run a single resort by id
+    python -m scraper.collect              # run all resorts (respects pause state)
+    python -m scraper.collect --force      # run all resorts even if paused
+    python -m scraper.collect cervinia     # run a single resort by id (ignores pause)
     python -m scraper.collect --init-db    # initialise database schema
 """
 
@@ -11,9 +12,10 @@ import json
 import sys
 import time
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from .db import init_db, upsert_resort
+from .db import (init_db, upsert_resort, get_setting, set_setting,
+                 get_disabled_resorts)
 from .scrapers import run_scraper
 from .store import save_snapshot
 from .weather import fetch_weather
@@ -26,6 +28,47 @@ def load_resorts() -> list[dict]:
         return json.load(f)
 
 
+def check_collection_gate(force: bool = False) -> bool:
+    """Return True if a full collection run should proceed.
+
+    Pause state lives in app_settings so it can be flipped from the web
+    admin panel. Auto pause/resume dates let the season start and end
+    without anyone remembering to press the button.
+    """
+    today = datetime.now(timezone.utc).date()
+    paused = get_setting("collection_paused", "false") == "true"
+
+    def _date_setting(key: str) -> date | None:
+        raw = get_setting(key)
+        if not raw:
+            return None
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            print(f"  Ignoring invalid {key}: {raw!r}")
+            return None
+
+    resume_on = _date_setting("auto_resume_date")
+    pause_on = _date_setting("auto_pause_date")
+
+    if paused and resume_on and today >= resume_on:
+        set_setting("collection_paused", "false")
+        set_setting("auto_resume_date", "")
+        print(f"Auto-resumed collection ({resume_on.isoformat()} reached).")
+        paused = False
+
+    if not paused and pause_on and today >= pause_on:
+        set_setting("collection_paused", "true")
+        set_setting("auto_pause_date", "")
+        print(f"Auto-paused collection ({pause_on.isoformat()} reached).")
+        paused = True
+
+    if paused and not force:
+        print("Collection is paused (toggle it on /admin, or use --force).")
+        return False
+    return True
+
+
 def collect_all(resort_filter: str | None = None):
     resorts = load_resorts()
     if resort_filter:
@@ -33,6 +76,11 @@ def collect_all(resort_filter: str | None = None):
         if not resorts:
             print(f"No resort found with id '{resort_filter}'")
             return
+    else:
+        disabled = get_disabled_resorts()
+        if disabled:
+            resorts = [r for r in resorts if r["id"] not in disabled]
+            print(f"  Skipping {len(disabled)} disabled resort(s): {', '.join(sorted(disabled))}")
 
     today = datetime.now(timezone.utc).date()
     print(f"\n{'='*60}")
@@ -97,7 +145,14 @@ def main():
         print(f"Loaded {len(load_resorts())} resorts.")
         return
 
-    resort_filter = args[0] if args and not args[0].startswith("--") else None
+    force = "--force" in args
+    resort_filter = next((a for a in args if not a.startswith("--")), None)
+
+    # The pause gate only applies to full (cron) runs; a named single-resort
+    # run is always an explicit request, so it proceeds regardless.
+    if resort_filter is None and not check_collection_gate(force):
+        return
+
     collect_all(resort_filter)
 
 
