@@ -1,6 +1,0 @@
-[build]
-builder = "nixpacks"
-
-[deploy]
-startCommand = "python -m scraper.collect"
-restartPolicyType = "never"
