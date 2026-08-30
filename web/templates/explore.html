@@ -166,8 +166,13 @@ const METRICS = {
   lifts: { label: "Lifts open",   unit: "",     get: r => r.error ? null : r.lifts_open, dom: null },
   snowm: { label: "Snow depth (mountain)", unit: "cm", get: r => r.snow_mtn,  dom: null },
   fresh: { label: "Fresh snow",   unit: "cm",   get: r => r.fresh,  dom: null },
+  pctMin:{ label: "% lifts open (worst of day)", unit: "%",
+           get: r => r.error ? null : r.pctMin, dom: [0,100] },
   gust:  { label: "Max wind gust", unit: "km/h", get: r => r.gust,  dom: null },
+  w700:  { label: "Summit wind (700hPa)", unit: "km/h", get: r => r.w700, dom: null },
   tmin:  { label: "Min temp",     unit: "°C",   get: r => r.tmin,   dom: null },
+  flMax: { label: "Freezing level (max)", unit: "m", get: r => r.flMax, dom: null },
+  sun:   { label: "Sunshine",     unit: "h",    get: r => r.sun,    dom: null },
 };
 
 const TABS = [
@@ -238,6 +243,8 @@ async function load() {
     precip: r[f.precipitation_mm], gust: r[f.wind_gust_max_kmh],
     wind: r[f.wind_speed_max_kmh], tmin: r[f.temp_min_c], tmax: r[f.temp_max_c],
     hol: r[f.is_uk_school_holiday], holName: r[f.holiday_name], error: r[f.error],
+    pctMin: r[f.pct_min_day], sun: r[f.sunshine_hours],
+    flMax: r[f.freezing_level_max_m], w700: r[f.wind_700hpa_max_kmh],
   }));
   LIFTS = ls;
   HOLS = hs;

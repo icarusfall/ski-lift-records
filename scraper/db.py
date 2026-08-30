@@ -93,8 +93,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
     fresh_snow_cm          NUMERIC(5,1),
     precipitation_mm       NUMERIC(5,1),
     weather_code           SMALLINT,
-    created_at      TIMESTAMP DEFAULT NOW(),
-    UNIQUE (resort_id, snapshot_date)
+    slot            VARCHAR(10) NOT NULL DEFAULT 'midday',
+    freezing_level_max_m   INTEGER,
+    freezing_level_min_m   INTEGER,
+    wind_700hpa_max_kmh    NUMERIC(5,1),
+    sunshine_hours         NUMERIC(4,1),
+    created_at      TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS lift_readings (
@@ -131,6 +135,17 @@ ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS temp_max_c NUMERIC(4,1);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS fresh_snow_cm NUMERIC(5,1);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS precipitation_mm NUMERIC(5,1);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS weather_code SMALLINT;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS slot VARCHAR(10) NOT NULL DEFAULT 'midday';
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS freezing_level_max_m INTEGER;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS freezing_level_min_m INTEGER;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS wind_700hpa_max_kmh NUMERIC(5,1);
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS sunshine_hours NUMERIC(4,1);
+
+-- Multiple captures per day: the old one-row-per-resort-per-day constraint is
+-- replaced by a unique index that includes the slot (morning / midday).
+ALTER TABLE snapshots DROP CONSTRAINT IF EXISTS snapshots_resort_id_snapshot_date_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_resort_date_slot
+    ON snapshots (resort_id, snapshot_date, slot);
 
 CREATE TABLE IF NOT EXISTS app_settings (
     key         VARCHAR(50) PRIMARY KEY,
@@ -193,6 +208,30 @@ def get_disabled_resorts() -> set[str]:
 def set_resort_enabled(resort_id: str, enabled: bool):
     with cursor() as cur:
         cur.execute("UPDATE resorts SET enabled = %s WHERE id = %s", (enabled, resort_id))
+
+
+def get_collected_resorts(snapshot_date, slot: str) -> set[str]:
+    """Resort ids that already have a clean snapshot for this date and slot."""
+    with cursor() as cur:
+        cur.execute("""
+            SELECT resort_id FROM snapshots
+            WHERE snapshot_date = %s AND slot = %s AND scrape_error IS NULL
+        """, (snapshot_date, slot))
+        return {row["resort_id"] for row in cur.fetchall()}
+
+
+def get_last_collection() -> dict | None:
+    """Most recent snapshot date plus how many resorts were clean that day."""
+    with cursor() as cur:
+        cur.execute("""
+            SELECT snapshot_date,
+                   COUNT(*) AS resorts,
+                   SUM(CASE WHEN scrape_error IS NULL THEN 1 ELSE 0 END) AS clean
+            FROM snapshots
+            WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM snapshots)
+            GROUP BY snapshot_date
+        """)
+        return cur.fetchone()
 
 
 def upsert_holiday(h: dict):

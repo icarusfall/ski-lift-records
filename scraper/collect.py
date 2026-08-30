@@ -2,10 +2,12 @@
 Main collection script. Run daily (or on demand).
 
 Usage:
-    python -m scraper.collect              # run all resorts (respects pause state)
-    python -m scraper.collect --force      # run all resorts even if paused
-    python -m scraper.collect cervinia     # run a single resort by id (ignores pause)
-    python -m scraper.collect --init-db    # initialise database schema
+    python -m scraper.collect                   # midday run, all resorts
+    python -m scraper.collect --slot morning    # morning run
+    python -m scraper.collect --catch-up        # only resorts still missing today
+    python -m scraper.collect --force           # run even if paused
+    python -m scraper.collect cervinia          # single resort (ignores pause)
+    python -m scraper.collect --init-db         # initialise database schema
 """
 
 import json
@@ -15,7 +17,7 @@ from pathlib import Path
 from datetime import date, datetime, timezone
 
 from .db import (init_db, upsert_resort, upsert_holiday, get_setting, set_setting,
-                 get_disabled_resorts)
+                 get_disabled_resorts, get_collected_resorts)
 from .holidays import load_holidays
 from .scrapers import run_scraper
 from .store import save_snapshot
@@ -70,7 +72,34 @@ def check_collection_gate(force: bool = False) -> bool:
     return True
 
 
-def collect_all(resort_filter: str | None = None):
+SLOTS = ("morning", "midday")
+RETRY_DELAY_S = 20
+
+
+def scrape_with_retry(resort: dict, attempts: int = 2):
+    """Scrape a resort, retrying once on exception or scrape error.
+
+    A cron run is the only chance to capture a given resort-slot, so without
+    a retry a transient network blip loses that reading permanently.
+    """
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            snap = run_scraper(resort)
+            if not snap.error or attempt == attempts:
+                return snap, None
+            print(f"         attempt {attempt} failed ({snap.error}); retrying...")
+        except Exception as e:
+            last_exc = e
+            if attempt == attempts:
+                break
+            print(f"         attempt {attempt} raised ({e}); retrying...")
+        time.sleep(RETRY_DELAY_S)
+    return None, last_exc
+
+
+def collect_all(resort_filter: str | None = None, slot: str = "midday",
+                catch_up: bool = False):
     resorts = load_resorts()
     if resort_filter:
         resorts = [r for r in resorts if r["id"] == resort_filter]
@@ -84,8 +113,17 @@ def collect_all(resort_filter: str | None = None):
             print(f"  Skipping {len(disabled)} disabled resort(s): {', '.join(sorted(disabled))}")
 
     today = datetime.now(timezone.utc).date()
+
+    if catch_up:
+        done = get_collected_resorts(today, slot)
+        resorts = [r for r in resorts if r["id"] not in done]
+        if not resorts:
+            print(f"Catch-up: all resorts already collected for {today} ({slot}).")
+            return []
+        print(f"  Catch-up: {len(resorts)} resort(s) still missing for {today} ({slot}).")
+
     print(f"\n{'='*60}")
-    print(f"  Ski Lift Tracker — {today.isoformat()} UTC")
+    print(f"  Ski Lift Tracker — {today.isoformat()} UTC ({slot})")
     print(f"  Collecting {len(resorts)} resort(s)")
     print(f"{'='*60}\n")
 
@@ -93,21 +131,27 @@ def collect_all(resort_filter: str | None = None):
     for resort in resorts:
         print(f"  [{resort['id']}] {resort['name']} ({resort['scraper']})...")
         try:
-            snap = run_scraper(resort)
+            snap, exc = scrape_with_retry(resort)
+            if snap is None:
+                raise exc
 
             # Fetch weather from Open-Meteo
             if resort.get("latitude") and resort.get("longitude"):
                 weather = fetch_weather(resort["latitude"], resort["longitude"],
                                         resort.get("top_altitude_m"))
-                snap.wind_gust_max_kmh  = weather.get("wind_gust_max_kmh")
-                snap.wind_speed_max_kmh = weather.get("wind_speed_max_kmh")
-                snap.temp_min_c         = weather.get("temp_min_c")
-                snap.temp_max_c         = weather.get("temp_max_c")
-                snap.fresh_snow_cm      = weather.get("fresh_snow_cm")
-                snap.precipitation_mm   = weather.get("precipitation_mm")
-                snap.weather_code       = weather.get("weather_code")
+                snap.wind_gust_max_kmh    = weather.get("wind_gust_max_kmh")
+                snap.wind_speed_max_kmh   = weather.get("wind_speed_max_kmh")
+                snap.temp_min_c           = weather.get("temp_min_c")
+                snap.temp_max_c           = weather.get("temp_max_c")
+                snap.fresh_snow_cm        = weather.get("fresh_snow_cm")
+                snap.precipitation_mm     = weather.get("precipitation_mm")
+                snap.weather_code         = weather.get("weather_code")
+                snap.sunshine_hours       = weather.get("sunshine_hours")
+                snap.freezing_level_max_m = weather.get("freezing_level_max_m")
+                snap.freezing_level_min_m = weather.get("freezing_level_min_m")
+                snap.wind_700hpa_max_kmh  = weather.get("wind_700hpa_max_kmh")
 
-            snapshot_id = save_snapshot(snap, today)
+            snapshot_id = save_snapshot(snap, today, slot)
 
             if snap.error:
                 status = f"ERROR: {snap.error}"
@@ -156,6 +200,17 @@ def main():
         return
 
     force = "--force" in args
+    catch_up = "--catch-up" in args
+
+    slot = "midday"
+    if "--slot" in args:
+        i = args.index("--slot")
+        if i + 1 >= len(args) or args[i + 1] not in SLOTS:
+            print(f"--slot must be followed by one of: {', '.join(SLOTS)}")
+            return
+        slot = args[i + 1]
+        args = args[:i] + args[i + 2:]
+
     resort_filter = next((a for a in args if not a.startswith("--")), None)
 
     # The pause gate only applies to full (cron) runs; a named single-resort
@@ -163,7 +218,7 @@ def main():
     if resort_filter is None and not check_collection_gate(force):
         return
 
-    collect_all(resort_filter)
+    collect_all(resort_filter, slot=slot, catch_up=catch_up)
 
 
 if __name__ == "__main__":

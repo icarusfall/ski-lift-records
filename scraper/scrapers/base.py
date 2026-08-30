@@ -56,6 +56,10 @@ class ResortSnapshot:
     fresh_snow_cm: Optional[float] = None
     precipitation_mm: Optional[float] = None
     weather_code: Optional[int] = None
+    sunshine_hours: Optional[float] = None
+    freezing_level_max_m: Optional[int] = None
+    freezing_level_min_m: Optional[int] = None
+    wind_700hpa_max_kmh: Optional[float] = None
     error: Optional[str] = None
     source_readings: list["SourceReading"] = field(default_factory=list)
 

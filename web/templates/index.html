@@ -33,6 +33,11 @@
   a.resort-link { color: #2b6cb0; text-decoration: none; }
   a.resort-link:hover { text-decoration: underline; }
   .flag { margin-right: 4px; }
+  .banner { padding: 0.7rem 1rem; border-radius: 6px; margin-bottom: 1rem;
+            font-size: 0.85rem; border-left: 4px solid; }
+  .banner a { color: inherit; }
+  .banner-warn { background: #fff5f5; border-color: #c53030; color: #742a2a; }
+  .banner-info { background: #ebf8ff; border-color: #2b6cb0; color: #2c5282; }
 </style>
 </head>
 <body>
@@ -41,6 +46,18 @@
   <p>Daily noon-UTC snapshots — high-altitude European resorts</p>
 </header>
 <div class="container">
+  {% if status.stale %}
+    <div class="banner banner-warn">
+      ⚠ <strong>No data collected for {{ status.age_days }} days.</strong>
+      Last snapshot {{ status.last_date }}. The daily collector may have stopped —
+      check the <a href="/admin">control panel</a> and the Railway cron service.
+    </div>
+  {% elif status.paused %}
+    <div class="banner banner-info">
+      ⏸ Collection is paused for the off-season. Last snapshot {{ status.last_date }}.
+      {% if status.resume_date %}Scheduled to resume {{ status.resume_date }}.{% endif %}
+    </div>
+  {% endif %}
   <div class="links">
     <a href="/explore">🔍 Data Explorer</a>
     <a href="/api/snapshots.csv">⬇ Latest CSV</a>

@@ -65,10 +65,11 @@ def get_latest_snapshots():
                 s.scrape_error
             FROM snapshots s
             JOIN resorts r ON r.id = s.resort_id
-            WHERE s.snapshot_date = (
-                SELECT MAX(s2.snapshot_date)
-                FROM snapshots s2
+            WHERE s.id = (
+                SELECT s2.id FROM snapshots s2
                 WHERE s2.resort_id = s.resort_id
+                ORDER BY s2.snapshot_date DESC, s2.snapshot_time DESC
+                LIMIT 1
             )
             ORDER BY r.country, r.area, r.name
         """)
@@ -78,18 +79,25 @@ def get_latest_snapshots():
 def get_history(resort_id: str, days: int = 60):
     with cursor() as cur:
         cur.execute("""
-            SELECT snapshot_date, lifts_open, lifts_total, pct_lifts_open,
-                   pistes_open_km, pistes_total_km,
-                   snow_depth_mountain_cm, snow_depth_valley_cm,
-                   snow_condition, last_snowfall_date, piste_conditions, avalanche_danger,
-                   wind_gust_max_kmh, wind_speed_max_kmh,
-                   temp_min_c, temp_max_c,
-                   fresh_snow_cm, precipitation_mm, weather_code,
-                   is_uk_school_holiday, holiday_name
-            FROM snapshots
-            WHERE resort_id = %s
-              AND snapshot_date >= CURRENT_DATE - %s
-            ORDER BY snapshot_date
+            SELECT * FROM (
+                SELECT DISTINCT ON (snapshot_date)
+                       snapshot_date, lifts_open, lifts_total, pct_lifts_open,
+                       pistes_open_km, pistes_total_km,
+                       snow_depth_mountain_cm, snow_depth_valley_cm,
+                       snow_condition, last_snowfall_date, piste_conditions, avalanche_danger,
+                       wind_gust_max_kmh, wind_speed_max_kmh,
+                       temp_min_c, temp_max_c,
+                       fresh_snow_cm, precipitation_mm, weather_code,
+                       sunshine_hours, freezing_level_max_m, wind_700hpa_max_kmh,
+                       is_uk_school_holiday, holiday_name, slot,
+                       MIN(pct_lifts_open) OVER (PARTITION BY snapshot_date) AS pct_min_day
+                FROM snapshots
+                WHERE resort_id = %s
+                  AND snapshot_date >= CURRENT_DATE - %s
+                -- one row per day: the midday capture is the canonical one,
+                -- so it stays comparable with the single-capture season 1
+                ORDER BY snapshot_date, (slot <> 'midday'), snapshot_time DESC
+            ) d ORDER BY snapshot_date
         """, (resort_id, days))
         return cur.fetchall()
 
@@ -114,10 +122,29 @@ def get_lift_history(resort_id: str, days: int = 60):
         return cur.fetchall()
 
 
+def collection_status() -> dict:
+    """Freshness of the most recent collection, for the dashboard banner."""
+    from scraper.db import get_last_collection
+    last = get_last_collection()
+    paused = get_setting("collection_paused", "false") == "true"
+    today = datetime.now(timezone.utc).date()
+    age = (today - last["snapshot_date"]).days if last else None
+    return {
+        "paused": paused,
+        "last_date": last["snapshot_date"] if last else None,
+        "clean": last["clean"] if last else 0,
+        "resorts": last["resorts"] if last else 0,
+        "age_days": age,
+        # Paused is a deliberate state, so only an unpaused gap is a problem.
+        "stale": (not paused) and age is not None and age >= 2,
+        "resume_date": get_setting("auto_resume_date", "") or "",
+    }
+
+
 @app.route("/")
 def index():
     rows = get_latest_snapshots()
-    return render_template("index.html", rows=rows)
+    return render_template("index.html", rows=rows, status=collection_status())
 
 
 @app.route("/resort/<resort_id>")
@@ -152,23 +179,34 @@ def api_explorer():
     """Whole dataset in compact columnar form for the client-side explorer."""
     with cursor() as cur:
         cur.execute("""
-            SELECT s.resort_id, r.name, r.country, r.area, r.top_altitude_m,
-                   s.snapshot_date, s.lifts_open, s.lifts_total, s.pct_lifts_open,
-                   s.snow_depth_mountain_cm, s.snow_depth_valley_cm,
-                   s.fresh_snow_cm, s.precipitation_mm,
-                   s.wind_gust_max_kmh, s.wind_speed_max_kmh,
-                   s.temp_min_c, s.temp_max_c,
-                   s.is_uk_school_holiday, s.holiday_name,
-                   (s.scrape_error IS NOT NULL) AS error
-            FROM snapshots s
-            JOIN resorts r ON r.id = s.resort_id
-            ORDER BY s.snapshot_date, r.country, r.area, r.name
+            SELECT * FROM (
+                SELECT DISTINCT ON (s.resort_id, s.snapshot_date)
+                       s.resort_id, r.name, r.country, r.area, r.top_altitude_m,
+                       s.snapshot_date, s.lifts_open, s.lifts_total, s.pct_lifts_open,
+                       s.snow_depth_mountain_cm, s.snow_depth_valley_cm,
+                       s.fresh_snow_cm, s.precipitation_mm,
+                       s.wind_gust_max_kmh, s.wind_speed_max_kmh,
+                       s.temp_min_c, s.temp_max_c,
+                       s.sunshine_hours, s.freezing_level_max_m, s.wind_700hpa_max_kmh,
+                       s.is_uk_school_holiday, s.holiday_name,
+                       -- lowest reading of the day across capture slots, so a
+                       -- morning wind hold that cleared by noon is not lost
+                       MIN(s.pct_lifts_open) OVER (
+                           PARTITION BY s.resort_id, s.snapshot_date) AS pct_min_day,
+                       (s.scrape_error IS NOT NULL) AS error,
+                       r.country AS _c, r.area AS _a, r.name AS _n
+                FROM snapshots s
+                JOIN resorts r ON r.id = s.resort_id
+                ORDER BY s.resort_id, s.snapshot_date,
+                         (s.slot <> 'midday'), s.snapshot_time DESC
+            ) d ORDER BY snapshot_date, _c, _a, _n
         """)
         rows = cur.fetchall()
-    fields = list(rows[0].keys()) if rows else []
+    # "_"-prefixed columns exist only to drive the outer sort
+    fields = [k for k in (rows[0].keys() if rows else []) if not k.startswith("_")]
     payload = {
         "fields": fields,
-        "rows": [[_plain(v) for v in row.values()] for row in rows],
+        "rows": [[_plain(row[k]) for k in fields] for row in rows],
     }
     resp = jsonify(payload)
     resp.headers["Cache-Control"] = "public, max-age=1800"

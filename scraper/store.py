@@ -5,7 +5,8 @@ from .scrapers.base import ResortSnapshot
 from .holidays import is_uk_school_holiday
 
 
-def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> int | None:
+def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None,
+                  slot: str = "midday") -> int | None:
     if snapshot_date is None:
         snapshot_date = datetime.now(timezone.utc).date()
 
@@ -23,7 +24,9 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                  snow_condition, last_snowfall_date, piste_conditions, avalanche_danger,
                  wind_gust_max_kmh, wind_speed_max_kmh,
                  temp_min_c, temp_max_c,
-                 fresh_snow_cm, precipitation_mm, weather_code)
+                 fresh_snow_cm, precipitation_mm, weather_code,
+                 sunshine_hours, freezing_level_max_m, freezing_level_min_m,
+                 wind_700hpa_max_kmh, slot)
             VALUES
                 (%(resort_id)s, %(now)s, %(date)s,
                  %(lifts_open)s, %(lifts_total)s, %(pct_open)s,
@@ -33,8 +36,10 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                  %(snow_condition)s, %(last_snowfall_date)s, %(piste_conditions)s, %(avalanche_danger)s,
                  %(wind_gust)s, %(wind_speed)s,
                  %(temp_min)s, %(temp_max)s,
-                 %(fresh_snow)s, %(precipitation)s, %(weather_code)s)
-            ON CONFLICT (resort_id, snapshot_date) DO UPDATE SET
+                 %(fresh_snow)s, %(precipitation)s, %(weather_code)s,
+                 %(sunshine)s, %(fl_max)s, %(fl_min)s,
+                 %(wind700)s, %(slot)s)
+            ON CONFLICT (resort_id, snapshot_date, slot) DO UPDATE SET
                 snapshot_time          = EXCLUDED.snapshot_time,
                 lifts_open             = EXCLUDED.lifts_open,
                 lifts_total            = EXCLUDED.lifts_total,
@@ -55,7 +60,11 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
                 temp_max_c             = EXCLUDED.temp_max_c,
                 fresh_snow_cm          = EXCLUDED.fresh_snow_cm,
                 precipitation_mm       = EXCLUDED.precipitation_mm,
-                weather_code           = EXCLUDED.weather_code
+                weather_code           = EXCLUDED.weather_code,
+                sunshine_hours         = EXCLUDED.sunshine_hours,
+                freezing_level_max_m   = EXCLUDED.freezing_level_max_m,
+                freezing_level_min_m   = EXCLUDED.freezing_level_min_m,
+                wind_700hpa_max_kmh    = EXCLUDED.wind_700hpa_max_kmh
             RETURNING id
         """, {
             "resort_id":     snap.resort_id,
@@ -83,6 +92,11 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
             "fresh_snow":          snap.fresh_snow_cm,
             "precipitation":       snap.precipitation_mm,
             "weather_code":        snap.weather_code,
+            "sunshine":            snap.sunshine_hours,
+            "fl_max":              snap.freezing_level_max_m,
+            "fl_min":              snap.freezing_level_min_m,
+            "wind700":             snap.wind_700hpa_max_kmh,
+            "slot":                slot,
         })
         row = cur.fetchone()
         if row is None:
