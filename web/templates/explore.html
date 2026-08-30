@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explore — Ski Lift Tracker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --surface: #fcfcfb; --page: #f0f4f8;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7; --wash: #f0efec;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+  }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--page); color: var(--ink); }
+  header { background: #2b6cb0; color: white; padding: 1rem 2rem;
+           display: flex; justify-content: space-between; align-items: baseline; }
+  header h1 { font-size: 1.4rem; }
+  header a { color: #bee3f8; font-size: 0.85rem; text-decoration: none; }
+  .container { max-width: 1250px; margin: 1.2rem auto; padding: 0 1rem; }
+  .card { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
+          border-radius: 8px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
+  .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+  .tabs button { background: none; border: 1px solid var(--baseline); color: var(--ink-2);
+                 border-radius: 999px; padding: 0.35rem 1rem; font-size: 0.85rem; cursor: pointer; }
+  .tabs button.active { background: #2b6cb0; border-color: #2b6cb0; color: white; font-weight: 600; }
+  .controls { display: flex; gap: 1rem 1.5rem; flex-wrap: wrap; align-items: center;
+              font-size: 0.82rem; }
+  .controls .group { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
+  .controls label { color: var(--muted); }
+  .preset { background: none; border: 1px solid var(--grid); border-radius: 5px;
+            padding: 0.2rem 0.6rem; font-size: 0.78rem; color: var(--ink-2); cursor: pointer; }
+  .preset.active { border-color: #2b6cb0; color: #2b6cb0; font-weight: 700; }
+  input[type="date"] { border: 1px solid var(--grid); border-radius: 5px;
+                       padding: 0.15rem 0.3rem; font-size: 0.78rem; color: var(--ink-2); }
+  select { border: 1px solid var(--grid); border-radius: 5px; padding: 0.25rem 0.4rem;
+           font-size: 0.82rem; color: var(--ink); background: var(--surface); }
+  .chips { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+  .chip { border: 1px solid var(--grid); background: none; border-radius: 999px;
+          padding: 0.18rem 0.6rem; font-size: 0.76rem; color: var(--ink-2); cursor: pointer;
+          display: inline-flex; align-items: center; gap: 0.3rem; }
+  .chip.on { border-color: var(--baseline); color: var(--ink); font-weight: 600; }
+  .chip .dot { width: 9px; height: 9px; border-radius: 50%; display: none; }
+  .chip.on .dot { display: inline-block; }
+  .hint { color: var(--muted); font-size: 0.76rem; margin-top: 0.4rem; }
+  h2 { font-size: 1rem; margin-bottom: 0.2rem; }
+  .sub { color: var(--ink-2); font-size: 0.8rem; margin-bottom: 0.8rem; }
+  /* heatmap */
+  .hm-scroll { overflow-x: auto; padding-bottom: 0.4rem; }
+  .hm-row { display: flex; align-items: center; height: 17px; }
+  .hm-label { position: sticky; left: 0; background: var(--surface); z-index: 2;
+              width: 170px; min-width: 170px; font-size: 0.72rem; color: var(--ink-2);
+              padding-right: 8px; text-align: right; white-space: nowrap; overflow: hidden;
+              text-overflow: ellipsis; }
+  .hm-cells { display: flex; }
+  .hm-cell { width: 13px; min-width: 13px; height: 13px; margin: 0 1px;
+             border-radius: 2px; }
+  .hm-cell.empty { background: none; box-shadow: inset 0 0 0 1px var(--grid); }
+  .hm-cell.err { background: var(--grid); }
+  .hm-head { height: 16px; font-size: 0.68rem; color: var(--muted); }
+  .hm-hol { height: 8px; }
+  .hm-hol .hm-cell { height: 4px; border-radius: 1px; background: none; }
+  .hm-hol .hm-cell.hol { background: var(--s4); }
+  .legend-row { display: flex; gap: 1.2rem; align-items: center; margin-top: 0.7rem;
+                font-size: 0.74rem; color: var(--ink-2); flex-wrap: wrap; }
+  .ramp { display: inline-flex; height: 10px; border-radius: 2px; overflow: hidden; }
+  .ramp i { width: 14px; }
+  .sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px;
+        vertical-align: -1px; margin-right: 4px; }
+  /* charts */
+  svg text { font-family: inherit; }
+  .legend { display: flex; gap: 0.9rem; flex-wrap: wrap; font-size: 0.78rem;
+            color: var(--ink-2); margin-bottom: 0.5rem; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+                 margin-right: 4px; vertical-align: -1px; }
+  /* tooltip */
+  #tip { position: fixed; pointer-events: none; background: var(--surface);
+         border: 1px solid rgba(11,11,11,0.15); border-radius: 6px;
+         box-shadow: 0 2px 10px rgba(0,0,0,0.12); padding: 0.45rem 0.6rem;
+         font-size: 0.76rem; color: var(--ink); z-index: 50; display: none;
+         max-width: 260px; }
+  #tip .t-date { font-weight: 700; margin-bottom: 2px; }
+  #tip .t-sub { color: var(--muted); }
+  #tip table { border-collapse: collapse; }
+  #tip td { padding: 1px 4px 1px 0; font-variant-numeric: tabular-nums; }
+  /* lifts + league */
+  .lift-row { display: flex; align-items: center; gap: 0.6rem; height: 24px; }
+  .lift-name { width: 260px; min-width: 180px; font-size: 0.78rem; color: var(--ink);
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+  .badge { background: var(--wash); border: 1px solid var(--baseline); color: var(--ink-2);
+           font-size: 0.62rem; border-radius: 3px; padding: 0 4px; margin-left: 4px;
+           vertical-align: 1px; }
+  .lift-track { flex: 1; max-width: 520px; height: 8px; background: var(--wash);
+                border-radius: 4px; }
+  .lift-fill { height: 8px; background: var(--s1); border-radius: 4px; }
+  .lift-val { font-size: 0.76rem; color: var(--ink-2); font-variant-numeric: tabular-nums;
+              width: 70px; }
+  table.league { border-collapse: collapse; width: 100%; }
+  table.league th { text-align: right; font-size: 0.74rem; color: var(--muted);
+                    border-bottom: 1px solid var(--baseline); padding: 0.3rem 0.6rem;
+                    cursor: pointer; white-space: nowrap; user-select: none; }
+  table.league th:first-child, table.league td:first-child { text-align: left; }
+  table.league td { padding: 0.3rem 0.6rem; font-size: 0.8rem; text-align: right;
+                    border-bottom: 1px solid var(--grid);
+                    font-variant-numeric: tabular-nums; }
+  table.league tr:last-child td { border-bottom: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔍 Data Explorer</h1>
+  <a href="/">← Dashboard</a>
+</header>
+<div class="container">
+
+  <div class="card">
+    <div class="tabs" id="tabs"></div>
+    <div class="controls">
+      <div class="group" id="rangePresets"><label>Range:</label></div>
+      <div class="group">
+        <input type="date" id="dFrom"> <span style="color:var(--muted)">→</span>
+        <input type="date" id="dTo">
+      </div>
+    </div>
+    <div class="controls" id="resortCtl" style="margin-top:0.6rem;">
+      <div class="group" style="align-items:flex-start;">
+        <label style="margin-top:2px;">Resorts:</label>
+        <div class="chips" id="chips"></div>
+      </div>
+    </div>
+    <div class="hint" id="selHint"></div>
+  </div>
+
+  <div class="card" id="view"><p class="sub">Loading data…</p></div>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+/* ---------- palette (validated reference palette, light mode) ---------- */
+const SERIES = ["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300","#4a3aa7","#e34948"];
+const SEQ = ["#cde2fb","#b7d3f6","#9ec5f4","#86b6ef","#6da7ec","#5598e7","#3987e5",
+             "#2a78d6","#256abf","#1c5cab","#184f95","#104281","#0d366b"];
+const INK="#0b0b0b", INK2="#52514e", MUTED="#898781", GRID="#e1e0d9",
+      BASE="#c3c2b7", WASH="#f0efec", SURF="#fcfcfb";
+
+/* ---------- state ---------- */
+let ROWS = [];          // snapshot objects
+let LIFTS = [];         // per-lift aggregates
+let RESORTS = [];       // [{id,name,area,country,alt}] in dashboard order
+let byResort = new Map();   // id -> Map(date -> row)
+let selection = [];         // ordered resort ids (max 8)
+let slotOf = new Map();     // resort id -> colour slot (stable while selected)
+let dFrom = "", dTo = "";
+let tab = "heatmap";
+let metric = "pct";
+let leagueSort = { key: "avg", asc: true };
+
+const METRICS = {
+  pct:   { label: "% lifts open", unit: "%",    get: r => r.error ? null : r.pct,      dom: [0,100] },
+  lifts: { label: "Lifts open",   unit: "",     get: r => r.error ? null : r.lifts_open, dom: null },
+  snowm: { label: "Snow depth (mountain)", unit: "cm", get: r => r.snow_mtn,  dom: null },
+  fresh: { label: "Fresh snow",   unit: "cm",   get: r => r.fresh,  dom: null },
+  gust:  { label: "Max wind gust", unit: "km/h", get: r => r.gust,  dom: null },
+  tmin:  { label: "Min temp",     unit: "°C",   get: r => r.tmin,   dom: null },
+};
+
+const TABS = [
+  ["heatmap", "Season heatmap"], ["compare", "Compare"], ["wind", "Wind vs open"],
+  ["lifts", "Lift reliability"], ["league", "League table"],
+];
+
+/* ---------- utilities ---------- */
+const $ = s => document.querySelector(s);
+function el(tag, attrs, ...kids) {
+  const isSvg = ["svg","g","rect","line","path","circle","text"].includes(tag);
+  const n = isSvg ? document.createElementNS("http://www.w3.org/2000/svg", tag)
+                  : document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs || {})) {
+    if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid) n.appendChild(kid);
+  return n;
+}
+const fmt = (v, dp=0) => v == null ? "—" : Number(v).toFixed(dp);
+const tip = $("#tip");
+function showTip(html, x, y) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(x + 14, window.innerWidth - w - 8) + "px";
+  tip.style.top  = Math.max(8, Math.min(y - h - 10, window.innerHeight - h - 8)) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+function seqColor(pct) {
+  if (pct == null) return null;
+  const i = Math.max(0, Math.min(SEQ.length - 1, Math.round(pct / 100 * (SEQ.length - 1))));
+  return SEQ[i];
+}
+function seasonOf(dstr) {
+  const y = +dstr.slice(0,4), m = +dstr.slice(5,7);
+  const start = m >= 8 ? y : y - 1;
+  return start + "/" + String((start + 1) % 100).padStart(2, "0");
+}
+function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v||1)));
+  for (const m of [1,2,2.5,5,10]) if (m*p >= v) return m*p; return v; }
+
+/* ---------- data load ---------- */
+async function load() {
+  const [ex, ls] = await Promise.all([
+    fetch("/api/explorer.json").then(r => r.json()),
+    fetch("/api/lift-stats.json").then(r => r.json()),
+  ]);
+  const f = {}; ex.fields.forEach((name, i) => f[name] = i);
+  ROWS = ex.rows.map(r => ({
+    id: r[f.resort_id], name: r[f.name], country: r[f.country], area: r[f.area],
+    alt: r[f.top_altitude_m], date: r[f.snapshot_date],
+    lifts_open: r[f.lifts_open], lifts_total: r[f.lifts_total],
+    pct: r[f.pct_lifts_open], snow_mtn: r[f.snow_depth_mountain_cm],
+    snow_val: r[f.snow_depth_valley_cm], fresh: r[f.fresh_snow_cm],
+    precip: r[f.precipitation_mm], gust: r[f.wind_gust_max_kmh],
+    wind: r[f.wind_speed_max_kmh], tmin: r[f.temp_min_c], tmax: r[f.temp_max_c],
+    hol: r[f.is_uk_school_holiday], holName: r[f.holiday_name], error: r[f.error],
+  }));
+  LIFTS = ls;
+
+  const seen = new Set();
+  for (const r of ROWS) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      RESORTS.push({ id: r.id, name: r.name, area: r.area, country: r.country, alt: r.alt });
+    }
+    if (!byResort.has(r.id)) byResort.set(r.id, new Map());
+    byResort.get(r.id).set(r.date, r);
+  }
+
+  // default range: the season with the most data
+  const bySeason = new Map();
+  for (const r of ROWS) {
+    const s = seasonOf(r.date);
+    if (!bySeason.has(s)) bySeason.set(s, new Set());
+    bySeason.get(s).add(r.date);
+  }
+  let best = null;
+  for (const [s, dates] of bySeason) if (!best || dates.size > bySeason.get(best).size) best = s;
+  const dates = [...bySeason.get(best)].sort();
+  dFrom = dates[0]; dTo = dates[dates.length - 1];
+
+  selection = ["cervinia", "zermatt", "val-thorens"].filter(id => byResort.has(id));
+  selection.forEach((id, i) => slotOf.set(id, i));
+
+  buildTabs(); buildPresets(bySeason); buildChips();
+  $("#dFrom").value = dFrom; $("#dTo").value = dTo;
+  $("#dFrom").addEventListener("change", e => { dFrom = e.target.value; markPreset(null); render(); });
+  $("#dTo").addEventListener("change", e => { dTo = e.target.value; markPreset(null); render(); });
+  render();
+}
+
+/* ---------- controls ---------- */
+function buildTabs() {
+  const host = $("#tabs");
+  for (const [key, label] of TABS)
+    host.appendChild(el("button", { text: label, "data-tab": key, onclick: () => {
+      tab = key;
+      host.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.tab === key));
+      render();
+    }}));
+  host.querySelector("button").classList.add("active");
+}
+function buildPresets(bySeason) {
+  const host = $("#rangePresets");
+  const mk = (label, from, to) => el("button", { class: "preset", text: label, onclick: e => {
+    dFrom = from; dTo = to;
+    $("#dFrom").value = from; $("#dTo").value = to;
+    markPreset(e.target); render();
+  }});
+  for (const [s, ds] of [...bySeason.entries()].sort()) {
+    const dates = [...ds].sort();
+    host.appendChild(mk("Season " + s, dates[0], dates[dates.length - 1]));
+  }
+  const all = ROWS.map(r => r.date).sort();
+  host.appendChild(mk("All data", all[0], all[all.length - 1]));
+  markPreset(host.querySelector(".preset"));
+}
+function markPreset(btn) {
+  document.querySelectorAll(".preset").forEach(b => b.classList.toggle("active", b === btn));
+}
+function buildChips() {
+  const host = $("#chips");
+  host.innerHTML = "";
+  for (const r of RESORTS) {
+    const on = selection.includes(r.id);
+    const chip = el("button", { class: "chip" + (on ? " on" : ""), onclick: () => toggleResort(r.id) },
+      el("span", { class: "dot" }), document.createTextNode(r.name));
+    if (on) chip.querySelector(".dot").style.background = SERIES[slotOf.get(r.id)];
+    host.appendChild(chip);
+  }
+  $("#selHint").textContent = selection.length >= 8
+    ? "Up to 8 resorts can be compared at once — deselect one to add another."
+    : "Resort selection applies to the Compare and Wind views (Wind uses the first 3).";
+}
+function toggleResort(id) {
+  if (selection.includes(id)) {
+    selection = selection.filter(x => x !== id);
+    slotOf.delete(id);                       // colour stays with the entity while selected
+  } else {
+    if (selection.length >= 8) return;
+    const used = new Set(slotOf.values());
+    let slot = 0; while (used.has(slot)) slot++;
+    slotOf.set(id, slot);
+    selection.push(id);
+  }
+  buildChips(); render();
+}
+
+/* ---------- shared chart scaffolding ---------- */
+function inRange(r) { return r.date >= dFrom && r.date <= dTo; }
+function rangeDates() {
+  const s = new Set();
+  for (const r of ROWS) if (inRange(r)) s.add(r.date);
+  return [...s].sort();
+}
+function chartSvg(w, h) {
+  return el("svg", { width: "100%", viewBox: `0 0 ${w} ${h}`, style: "display:block;" });
+}
+function axisLeft(svg, yScale, dom, m, unit, dp=0) {
+  const ticks = 5;
+  for (let i = 0; i <= ticks; i++) {
+    const v = dom[0] + (dom[1] - dom[0]) * i / ticks;
+    const y = yScale(v);
+    svg.appendChild(el("line", { x1: m.l, x2: m.w - m.r, y1: y, y2: y,
+      stroke: GRID, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: m.l - 6, y: y + 3, "text-anchor": "end",
+      "font-size": 10, fill: MUTED, text: fmt(v, dp) + (i === ticks && unit ? " " + unit : "") }));
+  }
+}
+
+/* ---------- heatmap ---------- */
+function renderHeatmap(host) {
+  const dates = rangeDates();
+  host.appendChild(el("h2", { text: "Season heatmap — % of lifts open" }));
+  host.appendChild(el("p", { class: "sub", text: "Each cell is one resort-day. Darker blue = more lifts open. Hover any cell for details." }));
+  const scroll = el("div", { class: "hm-scroll" });
+
+  // month header
+  const head = el("div", { class: "hm-row hm-head" }, el("div", { class: "hm-label" }));
+  const headCells = el("div", { class: "hm-cells" });
+  let lastMonth = "";
+  for (const d of dates) {
+    const mth = d.slice(0, 7);
+    const c = el("div", { class: "hm-cell", style: "height:14px;background:none;" });
+    if (mth !== lastMonth) {
+      lastMonth = mth;
+      c.style.overflow = "visible";
+      c.appendChild(el("span", { text: new Date(d + "T00:00Z").toLocaleString("en-GB",
+        { month: "short" }), style: `font-size:0.68rem;color:${MUTED};white-space:nowrap;` }));
+    }
+    headCells.appendChild(c);
+  }
+  head.appendChild(headCells); scroll.appendChild(head);
+
+  // holiday strip
+  const holRow = el("div", { class: "hm-row hm-hol" },
+    el("div", { class: "hm-label", text: "UK school holidays" }));
+  const holCells = el("div", { class: "hm-cells" });
+  for (const d of dates) {
+    const anyHol = ROWS.find(r => r.date === d && r.hol);
+    const c = el("div", { class: "hm-cell" + (anyHol ? " hol" : "") });
+    if (anyHol) {
+      c.addEventListener("mousemove", e => showTip(`<div class="t-date">${anyHol.holName || "UK school holiday"}</div><div class="t-sub">${d}</div>`, e.clientX, e.clientY));
+      c.addEventListener("mouseleave", hideTip);
+    }
+    holCells.appendChild(c);
+  }
+  holRow.appendChild(holCells); scroll.appendChild(holRow);
+
+  for (const res of RESORTS) {
+    const row = el("div", { class: "hm-row" },
+      el("div", { class: "hm-label", text: res.name }));
+    const cells = el("div", { class: "hm-cells" });
+    for (const d of dates) {
+      const r = byResort.get(res.id).get(d);
+      let cls = "hm-cell", bg = "";
+      if (!r) cls += " empty";
+      else if (r.error || r.pct == null) cls += " err";
+      else bg = seqColor(Number(r.pct));
+      const c = el("div", { class: cls });
+      if (bg) c.style.background = bg;
+      c.addEventListener("mousemove", e => {
+        let html = `<div class="t-date">${res.name}</div><div class="t-sub">${d}</div>`;
+        if (!r) html += "no data";
+        else if (r.error) html += "scrape error";
+        else {
+          html += `<table><tr><td>Lifts</td><td>${r.lifts_open} / ${r.lifts_total} (${fmt(r.pct)}%)</td></tr>`;
+          if (r.fresh != null) html += `<tr><td>Fresh snow</td><td>${fmt(r.fresh)} cm</td></tr>`;
+          if (r.gust != null) html += `<tr><td>Max gust</td><td>${fmt(r.gust)} km/h</td></tr>`;
+          if (r.hol) html += `<tr><td>Holiday</td><td>${r.holName || "yes"}</td></tr>`;
+          html += "</table>";
+        }
+        showTip(html, e.clientX, e.clientY);
+      });
+      c.addEventListener("mouseleave", hideTip);
+      cells.appendChild(c);
+    }
+    row.appendChild(cells); scroll.appendChild(row);
+  }
+  host.appendChild(scroll);
+
+  const ramp = el("span", { class: "ramp" });
+  for (const c of SEQ) { const i = el("i"); i.style.background = c; ramp.appendChild(i); }
+  host.appendChild(el("div", { class: "legend-row" },
+    el("span", { text: "0%" }), ramp, el("span", { text: "100% lifts open" }),
+    el("span", {}, el("span", { class: "sw", style: `background:${GRID}` }),
+      document.createTextNode("scrape error")),
+    el("span", {}, el("span", { class: "sw", style: `box-shadow:inset 0 0 0 1px ${GRID}` }),
+      document.createTextNode("no data")),
+    el("span", {}, el("span", { class: "sw", style: `background:${SERIES[3]};height:5px;` }),
+      document.createTextNode("UK school holiday"))));
+}
+
+/* ---------- compare (multi-line) ---------- */
+function renderCompare(host) {
+  const M = METRICS[metric];
+  host.appendChild(el("h2", { text: "Compare resorts over time" }));
+  const subRow = el("p", { class: "sub" });
+  subRow.append("Metric: ");
+  const sel = el("select", { onchange: e => { metric = e.target.value; render(); } });
+  for (const [k, m] of Object.entries(METRICS))
+    sel.appendChild(el("option", { value: k, text: m.label + (m.unit ? ` (${m.unit})` : "") }));
+  sel.value = metric;
+  subRow.appendChild(sel);
+  subRow.append("  — shaded bands are UK school holidays.");
+  host.appendChild(subRow);
+
+  if (!selection.length) { host.appendChild(el("p", { class: "sub", text: "Select at least one resort above." })); return; }
+
+  // legend (always shown for ≥2 series)
+  if (selection.length >= 2) {
+    const lg = el("div", { class: "legend" });
+    for (const id of selection) {
+      const r = RESORTS.find(x => x.id === id);
+      const item = el("span", {}, el("span", { class: "dot" }), document.createTextNode(r.name));
+      item.querySelector(".dot").style.background = SERIES[slotOf.get(id)];
+      lg.appendChild(item);
+    }
+    host.appendChild(lg);
+  }
+
+  const dates = rangeDates();
+  if (!dates.length) { host.appendChild(el("p", { class: "sub", text: "No data in this range." })); return; }
+  const w = Math.max(640, ($("#view").clientWidth || 900) - 40), h = 380;
+  const m = { l: 46, r: selection.length <= 4 ? 130 : 20, t: 14, b: 26, w, h };
+  const svg = chartSvg(w, h);
+
+  const t0 = Date.parse(dates[0]), t1 = Date.parse(dates[dates.length - 1]) || t0 + 1;
+  const x = d => m.l + (Date.parse(d) - t0) / Math.max(1, t1 - t0) * (w - m.l - m.r);
+
+  let dom = M.dom;
+  if (!dom) {
+    let lo = 0, hi = 1;
+    for (const id of selection) for (const d of dates) {
+      const r = byResort.get(id).get(d);
+      const v = r ? M.get(r) : null;
+      if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    }
+    dom = [lo < 0 ? Math.floor(lo / 5) * 5 : 0, niceMax(hi)];
+  }
+  const y = v => m.t + (1 - (v - dom[0]) / (dom[1] - dom[0])) * (h - m.t - m.b);
+
+  // holiday bands
+  let bandStart = null;
+  const holDates = new Set(ROWS.filter(r => r.hol && inRange(r)).map(r => r.date));
+  const sorted = [...dates];
+  for (let i = 0; i <= sorted.length; i++) {
+    const d = sorted[i], isHol = d && holDates.has(d);
+    if (isHol && bandStart == null) bandStart = d;
+    if ((!isHol || i === sorted.length) && bandStart != null) {
+      const endD = sorted[i - 1];
+      svg.appendChild(el("rect", { x: x(bandStart) - 3, y: m.t,
+        width: Math.max(4, x(endD) - x(bandStart) + 6), height: h - m.t - m.b,
+        fill: WASH }));
+      bandStart = null;
+    }
+  }
+
+  axisLeft(svg, y, dom, m, M.unit, dom[1] <= 10 ? 1 : 0);
+  svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: y(dom[0]), y2: y(dom[0]),
+    stroke: BASE, "stroke-width": 1 }));
+
+  // month ticks
+  let lastM = "";
+  for (const d of dates) {
+    if (d.slice(0, 7) !== lastM) {
+      lastM = d.slice(0, 7);
+      svg.appendChild(el("text", { x: x(d), y: h - 8, "font-size": 10, fill: MUTED,
+        text: new Date(d + "T00:00Z").toLocaleString("en-GB", { month: "short" }) }));
+    }
+  }
+
+  for (const id of selection) {
+    const col = SERIES[slotOf.get(id)];
+    let path = "", pen = false, lastPt = null;
+    for (const d of dates) {
+      const r = byResort.get(id).get(d);
+      const v = r ? M.get(r) : null;
+      if (v == null) { pen = false; continue; }
+      path += (pen ? "L" : "M") + x(d).toFixed(1) + " " + y(v).toFixed(1);
+      pen = true; lastPt = { d, v };
+    }
+    if (path) svg.appendChild(el("path", { d: path, fill: "none", stroke: col,
+      "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    if (lastPt && selection.length <= 4) {
+      const r = RESORTS.find(x2 => x2.id === id);
+      svg.appendChild(el("text", { x: x(lastPt.d) + 6, y: y(lastPt.v) + 3,
+        "font-size": 11, fill: INK2, text: r.name }));
+    }
+  }
+
+  // crosshair + tooltip
+  const vline = el("line", { y1: m.t, y2: h - m.b, stroke: BASE, "stroke-width": 1,
+    "stroke-dasharray": "3 3", visibility: "hidden" });
+  svg.appendChild(vline);
+  const overlay = el("rect", { x: m.l, y: m.t, width: w - m.l - m.r, height: h - m.t - m.b,
+    fill: "transparent" });
+  overlay.addEventListener("mousemove", e => {
+    const box = svg.getBoundingClientRect();
+    const px = (e.clientX - box.left) * (w / box.width);
+    let nearest = dates[0], best = Infinity;
+    for (const d of dates) { const dd = Math.abs(x(d) - px); if (dd < best) { best = dd; nearest = d; } }
+    vline.setAttribute("x1", x(nearest)); vline.setAttribute("x2", x(nearest));
+    vline.setAttribute("visibility", "visible");
+    let html = `<div class="t-date">${nearest}</div>`;
+    const anyHol = ROWS.find(r => r.date === nearest && r.hol);
+    if (anyHol) html += `<div class="t-sub">${anyHol.holName || "UK school holiday"}</div>`;
+    html += "<table>";
+    const vals = selection.map(id => {
+      const r = byResort.get(id).get(nearest);
+      return { id, v: r ? M.get(r) : null, name: RESORTS.find(x2 => x2.id === id).name };
+    }).sort((a, b) => (b.v ?? -1e9) - (a.v ?? -1e9));
+    for (const s of vals)
+      html += `<tr><td><span class="sw" style="background:${SERIES[slotOf.get(s.id)]};border-radius:50%;"></span>${s.name}</td><td><b>${fmt(s.v, M.unit === "°C" || dom[1] <= 10 ? 1 : 0)}</b> ${s.v != null ? M.unit : ""}</td></tr>`;
+    html += "</table>";
+    showTip(html, e.clientX, e.clientY);
+  });
+  overlay.addEventListener("mouseleave", () => { vline.setAttribute("visibility", "hidden"); hideTip(); });
+  svg.appendChild(overlay);
+  host.appendChild(svg);
+}
+
+/* ---------- wind scatter ---------- */
+function renderWind(host) {
+  const picks = selection.slice(0, 3);
+  host.appendChild(el("h2", { text: "Wind vs lifts open" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "One point per resort-day: daily max gust against % of lifts open. "
+        + (selection.length > 3 ? "Showing the first 3 selected resorts (scatter is capped at 3 for legibility)." : "") }));
+  if (!picks.length) { host.appendChild(el("p", { class: "sub", text: "Select at least one resort above." })); return; }
+
+  if (picks.length >= 2) {
+    const lg = el("div", { class: "legend" });
+    for (const id of picks) {
+      const r = RESORTS.find(x => x.id === id);
+      const item = el("span", {}, el("span", { class: "dot" }), document.createTextNode(r.name));
+      item.querySelector(".dot").style.background = SERIES[slotOf.get(id)];
+      lg.appendChild(item);
+    }
+    host.appendChild(lg);
+  }
+
+  const pts = [];
+  for (const id of picks) for (const r of byResort.get(id).values())
+    if (inRange(r) && !r.error && r.gust != null && r.pct != null)
+      pts.push({ id, r, name: RESORTS.find(x => x.id === id).name });
+  if (!pts.length) { host.appendChild(el("p", { class: "sub", text: "No wind data in this range." })); return; }
+
+  const w = Math.max(640, ($("#view").clientWidth || 900) - 40), h = 400;
+  const m = { l: 46, r: 20, t: 14, b: 40, w, h };
+  const maxG = niceMax(Math.max(...pts.map(p => Number(p.r.gust))));
+  const x = v => m.l + v / maxG * (w - m.l - m.r);
+  const y = v => m.t + (1 - v / 100) * (h - m.t - m.b);
+  const svg = chartSvg(w, h);
+  axisLeft(svg, y, [0, 100], m, "%");
+  for (let g = 0; g <= maxG; g += maxG / 5) {
+    svg.appendChild(el("text", { x: x(g), y: h - 22, "text-anchor": "middle",
+      "font-size": 10, fill: MUTED, text: fmt(g) }));
+  }
+  svg.appendChild(el("text", { x: (m.l + w - m.r) / 2, y: h - 6, "text-anchor": "middle",
+    "font-size": 11, fill: INK2, text: "Daily max wind gust (km/h)" }));
+  svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: y(0), y2: y(0), stroke: BASE }));
+
+  for (const p of pts) {
+    const c = el("circle", { cx: x(Number(p.r.gust)).toFixed(1), cy: y(Number(p.r.pct)).toFixed(1),
+      r: 4.5, fill: SERIES[slotOf.get(p.id)], stroke: SURF, "stroke-width": 2 });
+    c.addEventListener("mousemove", e => showTip(
+      `<div class="t-date">${p.name}</div><div class="t-sub">${p.r.date}</div>` +
+      `<table><tr><td>Lifts</td><td>${p.r.lifts_open}/${p.r.lifts_total} (${fmt(p.r.pct)}%)</td></tr>` +
+      `<tr><td>Max gust</td><td>${fmt(p.r.gust)} km/h</td></tr></table>`, e.clientX, e.clientY));
+    c.addEventListener("mouseleave", hideTip);
+    svg.appendChild(c);
+  }
+  host.appendChild(svg);
+}
+
+/* ---------- lift reliability ---------- */
+let liftPick = null;
+function renderLifts(host) {
+  host.appendChild(el("h2", { text: "Lift reliability" }));
+  const withLifts = [...new Set(LIFTS.map(l => l.resort_id))];
+  if (!withLifts.length) { host.appendChild(el("p", { class: "sub", text: "No per-lift data yet." })); return; }
+  if (!liftPick || !withLifts.includes(liftPick)) liftPick = withLifts.includes("cervinia") ? "cervinia" : withLifts[0];
+
+  const subRow = el("p", { class: "sub" });
+  subRow.append("Share of recorded days each lift was open (whole history; primary-scraped resorts only). Resort: ");
+  const sel = el("select", { onchange: e => { liftPick = e.target.value; render(); } });
+  for (const id of withLifts) {
+    const name = LIFTS.find(l => l.resort_id === id).resort_name;
+    sel.appendChild(el("option", { value: id, text: name }));
+  }
+  sel.value = liftPick;
+  subRow.appendChild(sel);
+  host.appendChild(subRow);
+
+  const lifts = LIFTS.filter(l => l.resort_id === liftPick)
+    .map(l => ({ ...l, pct: l.days_total ? 100 * l.days_open / l.days_total : 0 }))
+    .sort((a, b) => a.pct - b.pct);
+  for (const l of lifts) {
+    const nameCell = el("div", { class: "lift-name", text: l.name });
+    if (l.is_link) nameCell.appendChild(el("span", { class: "badge", text: "LINK" }));
+    const fill = el("div", { class: "lift-fill" }); fill.style.width = l.pct.toFixed(1) + "%";
+    const row = el("div", { class: "lift-row" }, nameCell,
+      el("div", { class: "lift-track" }, fill),
+      el("div", { class: "lift-val", text: fmt(l.pct) + "% · " + l.days_open + "/" + l.days_total }));
+    host.appendChild(row);
+  }
+  host.appendChild(el("p", { class: "hint",
+    text: "LINK marks lifts that connect to a neighbouring ski area — for Cervinia, the Zermatt connection." }));
+}
+
+/* ---------- league table ---------- */
+function renderLeague(host) {
+  host.appendChild(el("h2", { text: "League table" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Computed over the selected date range (error days excluded). “Windy” = daily max gust over 60 km/h. Click a column to sort." }));
+  const stats = [];
+  for (const res of RESORTS) {
+    const rows = [...byResort.get(res.id).values()].filter(r => inRange(r) && !r.error && r.pct != null);
+    if (!rows.length) continue;
+    const avg = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+    const pcts = rows.map(r => Number(r.pct));
+    const calm  = rows.filter(r => r.gust != null && Number(r.gust) <= 60).map(r => Number(r.pct));
+    const windy = rows.filter(r => r.gust != null && Number(r.gust) > 60).map(r => Number(r.pct));
+    stats.push({
+      name: res.name, n: rows.length, avg: avg(pcts),
+      below50: pcts.filter(p => p < 50).length,
+      gust: avg(rows.filter(r => r.gust != null).map(r => Number(r.gust))),
+      calm: avg(calm), windyN: windy.length, windy: avg(windy),
+      drop: (calm.length && windy.length) ? avg(calm) - avg(windy) : null,
+    });
+  }
+  const cols = [
+    ["name", "Resort"], ["n", "Days"], ["avg", "Avg % open"], ["below50", "Days <50%"],
+    ["gust", "Avg gust km/h"], ["calm", "Calm avg %"], ["windy", "Windy avg %"], ["drop", "Wind drop (pts)"],
+  ];
+  stats.sort((a, b) => {
+    const k = leagueSort.key, va = a[k], vb = b[k];
+    const cmp = typeof va === "string" ? String(va).localeCompare(vb)
+      : (va ?? -1e9) - (vb ?? -1e9);
+    return leagueSort.asc ? cmp : -cmp;
+  });
+  const thead = el("tr", {});
+  for (const [k, label] of cols)
+    thead.appendChild(el("th", {
+      text: label + (leagueSort.key === k ? (leagueSort.asc ? " ▲" : " ▼") : ""),
+      onclick: () => {
+        leagueSort = { key: k, asc: leagueSort.key === k ? !leagueSort.asc : k === "name" };
+        render();
+      }}));
+  const table = el("table", { class: "league" }, el("thead", {}, thead));
+  const tbody = el("tbody", {});
+  for (const s of stats) {
+    tbody.appendChild(el("tr", {},
+      el("td", { text: s.name }), el("td", { text: s.n }),
+      el("td", { text: fmt(s.avg, 1) }), el("td", { text: s.below50 }),
+      el("td", { text: fmt(s.gust) }), el("td", { text: fmt(s.calm, 1) }),
+      el("td", { text: s.windy != null ? fmt(s.windy, 1) + " (" + s.windyN + "d)" : "—" }),
+      el("td", { text: fmt(s.drop, 1) })));
+  }
+  table.appendChild(tbody);
+  host.appendChild(table);
+}
+
+/* ---------- render dispatch ---------- */
+function render() {
+  hideTip();
+  const host = $("#view");
+  host.innerHTML = "";
+  $("#resortCtl").style.display = (tab === "compare" || tab === "wind") ? "" : "none";
+  try {
+    ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
+       lifts: renderLifts, league: renderLeague })[tab](host);
+  } catch (err) {
+    host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
+  }
+}
+let rsz;
+window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setTimeout(render, 200); });
+load().catch(err => { $("#view").innerHTML = "<p class='sub'>Failed to load data: " + err.message + "</p>"; });
+</script>
+</body>
+</html>

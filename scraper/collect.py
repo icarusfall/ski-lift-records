@@ -24,7 +24,7 @@ RESORTS_FILE = Path(__file__).parent.parent / "config" / "resorts.json"
 
 
 def load_resorts() -> list[dict]:
-    with open(RESORTS_FILE) as f:
+    with open(RESORTS_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 

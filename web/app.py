@@ -10,7 +10,8 @@ import io
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
 # Allow importing scraper package from parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -130,6 +131,70 @@ def resort_detail(resort_id: str):
                            history=history,
                            lift_history=lift_history,
                            days=days)
+
+
+def _plain(v):
+    """JSON-friendly scalar: ISO dates, float decimals."""
+    if isinstance(v, (date, datetime)):
+        return v.isoformat()
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
+
+
+@app.route("/explore")
+def explore():
+    return render_template("explore.html")
+
+
+@app.route("/api/explorer.json")
+def api_explorer():
+    """Whole dataset in compact columnar form for the client-side explorer."""
+    with cursor() as cur:
+        cur.execute("""
+            SELECT s.resort_id, r.name, r.country, r.area, r.top_altitude_m,
+                   s.snapshot_date, s.lifts_open, s.lifts_total, s.pct_lifts_open,
+                   s.snow_depth_mountain_cm, s.snow_depth_valley_cm,
+                   s.fresh_snow_cm, s.precipitation_mm,
+                   s.wind_gust_max_kmh, s.wind_speed_max_kmh,
+                   s.temp_min_c, s.temp_max_c,
+                   s.is_uk_school_holiday, s.holiday_name,
+                   (s.scrape_error IS NOT NULL) AS error
+            FROM snapshots s
+            JOIN resorts r ON r.id = s.resort_id
+            ORDER BY s.snapshot_date, r.country, r.area, r.name
+        """)
+        rows = cur.fetchall()
+    fields = list(rows[0].keys()) if rows else []
+    payload = {
+        "fields": fields,
+        "rows": [[_plain(v) for v in row.values()] for row in rows],
+    }
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "public, max-age=1800"
+    return resp
+
+
+@app.route("/api/lift-stats.json")
+def api_lift_stats():
+    """Per-lift open-day counts (whole history, primary-scraped resorts only)."""
+    with cursor() as cur:
+        cur.execute("""
+            SELECT l.resort_id, r.name AS resort_name, l.name, l.is_link,
+                   SUM(CASE WHEN lr.status = 'open' THEN 1 ELSE 0 END) AS days_open,
+                   COUNT(*) AS days_total
+            FROM lift_readings lr
+            JOIN lifts l ON l.id = lr.lift_id
+            JOIN snapshots s ON s.id = lr.snapshot_id
+            JOIN resorts r ON r.id = l.resort_id
+            WHERE NOT l.name LIKE 'lift\\_%%'
+            GROUP BY l.resort_id, r.name, l.name, l.is_link
+            ORDER BY l.resort_id, l.name
+        """)
+        rows = cur.fetchall()
+    resp = jsonify([{k: _plain(v) for k, v in row.items()} for row in rows])
+    resp.headers["Cache-Control"] = "public, max-age=1800"
+    return resp
 
 
 @app.route("/api/snapshots.json")
