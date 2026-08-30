@@ -1,0 +1,33 @@
+{
+  "note": "School holiday periods relevant to Alpine ski crowding. Dates padded to enclosing weekends where the official range is school days only. Sources: education.gouv.fr calendar (FR), gov.uk/council norms (UK England & Wales), KMK Ferienkalender (DE), rijksoverheid.nl (NL). Re-verify each summer for the following season.",
+  "holidays": [
+    { "country": "UK", "region": "", "name": "Christmas 2025", "start": "2025-12-20", "end": "2026-01-04" },
+    { "country": "UK", "region": "", "name": "Feb Half-Term 2026", "start": "2026-02-14", "end": "2026-02-22" },
+    { "country": "UK", "region": "", "name": "Easter 2026", "start": "2026-04-01", "end": "2026-04-17" },
+    { "country": "FR", "region": "", "name": "Vacances de Noël 2025", "start": "2025-12-20", "end": "2026-01-04" },
+    { "country": "FR", "region": "Zone A", "name": "Vacances d'hiver 2026", "start": "2026-02-07", "end": "2026-02-22" },
+    { "country": "FR", "region": "Zone B", "name": "Vacances d'hiver 2026", "start": "2026-02-14", "end": "2026-03-01" },
+    { "country": "FR", "region": "Zone C", "name": "Vacances d'hiver 2026", "start": "2026-02-21", "end": "2026-03-08" },
+    { "country": "FR", "region": "Zone A", "name": "Vacances de printemps 2026", "start": "2026-04-04", "end": "2026-04-19" },
+    { "country": "FR", "region": "Zone B", "name": "Vacances de printemps 2026", "start": "2026-04-11", "end": "2026-04-26" },
+    { "country": "FR", "region": "Zone C", "name": "Vacances de printemps 2026", "start": "2026-04-18", "end": "2026-05-03" },
+
+    { "country": "UK", "region": "", "name": "Christmas 2026", "start": "2026-12-19", "end": "2027-01-03" },
+    { "country": "UK", "region": "", "name": "Feb Half-Term 2027", "start": "2027-02-13", "end": "2027-02-21" },
+    { "country": "UK", "region": "", "name": "Easter 2027", "start": "2027-03-26", "end": "2027-04-11" },
+    { "country": "FR", "region": "", "name": "Vacances de Noël 2026", "start": "2026-12-19", "end": "2027-01-03" },
+    { "country": "FR", "region": "Zone A", "name": "Vacances d'hiver 2027", "start": "2027-02-13", "end": "2027-02-28" },
+    { "country": "FR", "region": "Zone B", "name": "Vacances d'hiver 2027", "start": "2027-02-20", "end": "2027-03-07" },
+    { "country": "FR", "region": "Zone C", "name": "Vacances d'hiver 2027", "start": "2027-02-06", "end": "2027-02-21" },
+    { "country": "FR", "region": "Zone A", "name": "Vacances de printemps 2027", "start": "2027-04-10", "end": "2027-04-25" },
+    { "country": "FR", "region": "Zone B", "name": "Vacances de printemps 2027", "start": "2027-04-17", "end": "2027-05-02" },
+    { "country": "FR", "region": "Zone C", "name": "Vacances de printemps 2027", "start": "2027-04-03", "end": "2027-04-18" },
+    { "country": "DE", "region": "Bavaria", "name": "Frühjahrsferien 2027", "start": "2027-02-06", "end": "2027-02-14" },
+    { "country": "DE", "region": "Bavaria", "name": "Osterferien 2027", "start": "2027-03-20", "end": "2027-04-04" },
+    { "country": "DE", "region": "NRW", "name": "Osterferien 2027", "start": "2027-03-20", "end": "2027-04-04" },
+    { "country": "DE", "region": "Baden-Württemberg", "name": "Osterferien 2027", "start": "2027-03-27", "end": "2027-04-04" },
+    { "country": "NL", "region": "", "name": "Kerstvakantie 2026", "start": "2026-12-19", "end": "2027-01-03" },
+    { "country": "NL", "region": "Noord/Midden", "name": "Voorjaarsvakantie 2027", "start": "2027-02-20", "end": "2027-02-28" },
+    { "country": "NL", "region": "Zuid", "name": "Voorjaarsvakantie 2027", "start": "2027-02-13", "end": "2027-02-21" }
+  ]
+}

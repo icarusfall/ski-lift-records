@@ -175,6 +175,21 @@ def api_explorer():
     return resp
 
 
+@app.route("/api/holidays.json")
+def api_holidays():
+    """School holiday periods (UK, FR zones, DE Länder, NL regions)."""
+    with cursor() as cur:
+        cur.execute("""
+            SELECT country, region, name, start_date, end_date
+            FROM holiday_periods
+            ORDER BY country, region, start_date
+        """)
+        rows = cur.fetchall()
+    resp = jsonify([{k: _plain(v) for k, v in row.items()} for row in rows])
+    resp.headers["Cache-Control"] = "public, max-age=1800"
+    return resp
+
+
 @app.route("/api/lift-stats.json")
 def api_lift_stats():
     """Per-lift open-day counts (whole history, primary-scraped resorts only)."""

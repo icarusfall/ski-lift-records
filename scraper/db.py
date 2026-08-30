@@ -153,6 +153,18 @@ CREATE TABLE IF NOT EXISTS source_readings (
     UNIQUE (snapshot_id, source)
 );
 CREATE INDEX IF NOT EXISTS idx_source_readings_snapshot ON source_readings (snapshot_id);
+
+CREATE TABLE IF NOT EXISTS holiday_periods (
+    id          SERIAL PRIMARY KEY,
+    country     CHAR(2) NOT NULL,
+    region      VARCHAR(50) NOT NULL DEFAULT '',
+    name        VARCHAR(100) NOT NULL,
+    start_date  DATE NOT NULL,
+    end_date    DATE NOT NULL,
+    created_at  TIMESTAMP DEFAULT NOW(),
+    UNIQUE (country, region, name)
+);
+CREATE INDEX IF NOT EXISTS idx_holiday_periods_dates ON holiday_periods (start_date, end_date);
 """
 
 
@@ -181,6 +193,17 @@ def get_disabled_resorts() -> set[str]:
 def set_resort_enabled(resort_id: str, enabled: bool):
     with cursor() as cur:
         cur.execute("UPDATE resorts SET enabled = %s WHERE id = %s", (enabled, resort_id))
+
+
+def upsert_holiday(h: dict):
+    with cursor() as cur:
+        cur.execute("""
+            INSERT INTO holiday_periods (country, region, name, start_date, end_date)
+            VALUES (%(country)s, %(region)s, %(name)s, %(start)s, %(end)s)
+            ON CONFLICT (country, region, name) DO UPDATE SET
+                start_date = EXCLUDED.start_date,
+                end_date   = EXCLUDED.end_date
+        """, {**h, "region": h.get("region") or ""})
 
 
 def init_db():

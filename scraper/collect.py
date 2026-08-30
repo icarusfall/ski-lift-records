@@ -14,8 +14,9 @@ import time
 from pathlib import Path
 from datetime import date, datetime, timezone
 
-from .db import (init_db, upsert_resort, get_setting, set_setting,
+from .db import (init_db, upsert_resort, upsert_holiday, get_setting, set_setting,
                  get_disabled_resorts)
+from .holidays import load_holidays
 from .scrapers import run_scraper
 from .store import save_snapshot
 from .weather import fetch_weather
@@ -147,6 +148,11 @@ def main():
         for resort in load_resorts():
             upsert_resort(resort)
         print(f"Loaded {len(load_resorts())} resorts.")
+        print("Loading school holiday periods...")
+        holidays = load_holidays()
+        for h in holidays:
+            upsert_holiday(h)
+        print(f"Loaded {len(holidays)} holiday periods.")
         return
 
     force = "--force" in args

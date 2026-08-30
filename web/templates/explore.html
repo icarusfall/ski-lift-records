@@ -60,8 +60,8 @@
   .hm-cell.empty { background: none; box-shadow: inset 0 0 0 1px var(--grid); }
   .hm-cell.err { background: var(--grid); }
   .hm-head { height: 16px; font-size: 0.68rem; color: var(--muted); }
-  .hm-hol { height: 8px; }
-  .hm-hol .hm-cell { height: 4px; border-radius: 1px; background: none; }
+  .hm-hol { height: 15px; }
+  .hm-hol .hm-cell { height: 5px; border-radius: 1px; background: none; }
   .hm-hol .hm-cell.hol { background: var(--s4); }
   .legend-row { display: flex; gap: 1.2rem; align-items: center; margin-top: 0.7rem;
                 font-size: 0.74rem; color: var(--ink-2); flex-wrap: wrap; }
@@ -149,6 +149,9 @@ const INK="#0b0b0b", INK2="#52514e", MUTED="#898781", GRID="#e1e0d9",
 /* ---------- state ---------- */
 let ROWS = [];          // snapshot objects
 let LIFTS = [];         // per-lift aggregates
+let HOLS = [];          // holiday periods
+let HOL_GROUPS = [];    // [{key, country, periods:[...]}] e.g. "FR Zone A"
+let holOverlay = "UK";  // which group shades the Compare chart
 let RESORTS = [];       // [{id,name,area,country,alt}] in dashboard order
 let byResort = new Map();   // id -> Map(date -> row)
 let selection = [];         // ordered resort ids (max 8)
@@ -207,12 +210,23 @@ function seasonOf(dstr) {
 }
 function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v||1)));
   for (const m of [1,2,2.5,5,10]) if (m*p >= v) return m*p; return v; }
+/* ISO date strings compare lexicographically, so range tests are plain <=. */
+function groupCovers(group, d) {
+  return group.periods.find(p => p.start_date <= d && d <= p.end_date) || null;
+}
+function groupsOn(d) {
+  return HOL_GROUPS.map(g => ({ g, p: groupCovers(g, d) })).filter(x => x.p);
+}
+function groupsInRange() {
+  return HOL_GROUPS.filter(g => g.periods.some(p => p.end_date >= dFrom && p.start_date <= dTo));
+}
 
 /* ---------- data load ---------- */
 async function load() {
-  const [ex, ls] = await Promise.all([
+  const [ex, ls, hs] = await Promise.all([
     fetch("/api/explorer.json").then(r => r.json()),
     fetch("/api/lift-stats.json").then(r => r.json()),
+    fetch("/api/holidays.json").then(r => r.json()).catch(() => []),
   ]);
   const f = {}; ex.fields.forEach((name, i) => f[name] = i);
   ROWS = ex.rows.map(r => ({
@@ -226,6 +240,15 @@ async function load() {
     hol: r[f.is_uk_school_holiday], holName: r[f.holiday_name], error: r[f.error],
   }));
   LIFTS = ls;
+  HOLS = hs;
+  const groups = new Map();
+  for (const h of HOLS) {
+    const key = (h.country + " " + (h.region || "")).trim();
+    if (!groups.has(key)) groups.set(key, { key, country: h.country, periods: [] });
+    groups.get(key).periods.push(h);
+  }
+  HOL_GROUPS = [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
+  if (!HOL_GROUPS.some(g => g.key === holOverlay)) holOverlay = HOL_GROUPS[0]?.key || "";
 
   const seen = new Set();
   for (const r of ROWS) {
@@ -362,20 +385,26 @@ function renderHeatmap(host) {
   }
   head.appendChild(headCells); scroll.appendChild(head);
 
-  // holiday strip
-  const holRow = el("div", { class: "hm-row hm-hol" },
-    el("div", { class: "hm-label", text: "UK school holidays" }));
-  const holCells = el("div", { class: "hm-cells" });
-  for (const d of dates) {
-    const anyHol = ROWS.find(r => r.date === d && r.hol);
-    const c = el("div", { class: "hm-cell" + (anyHol ? " hol" : "") });
-    if (anyHol) {
-      c.addEventListener("mousemove", e => showTip(`<div class="t-date">${anyHol.holName || "UK school holiday"}</div><div class="t-sub">${d}</div>`, e.clientX, e.clientY));
-      c.addEventListener("mouseleave", hideTip);
+  // school-holiday strips — one per country/zone, so the French zone
+  // stagger and the weeks where several countries overlap are visible
+  for (const g of groupsInRange()) {
+    const holRow = el("div", { class: "hm-row hm-hol" },
+      el("div", { class: "hm-label", text: g.key + " holidays" }));
+    const holCells = el("div", { class: "hm-cells" });
+    for (const d of dates) {
+      const p = groupCovers(g, d);
+      const c = el("div", { class: "hm-cell" + (p ? " hol" : "") });
+      if (p) {
+        c.addEventListener("mousemove", e => showTip(
+          `<div class="t-date">${p.name}</div><div class="t-sub">${g.key} · ${d}</div>` +
+          `<div class="t-sub">${p.start_date} → ${p.end_date}</div>`, e.clientX, e.clientY));
+        c.addEventListener("mouseleave", hideTip);
+      }
+      holCells.appendChild(c);
     }
-    holCells.appendChild(c);
+    holRow.appendChild(holCells); scroll.appendChild(holRow);
   }
-  holRow.appendChild(holCells); scroll.appendChild(holRow);
+  if (groupsInRange().length) scroll.appendChild(el("div", { style: "height:6px;" }));
 
   for (const res of RESORTS) {
     const row = el("div", { class: "hm-row" },
@@ -397,7 +426,8 @@ function renderHeatmap(host) {
           html += `<table><tr><td>Lifts</td><td>${r.lifts_open} / ${r.lifts_total} (${fmt(r.pct)}%)</td></tr>`;
           if (r.fresh != null) html += `<tr><td>Fresh snow</td><td>${fmt(r.fresh)} cm</td></tr>`;
           if (r.gust != null) html += `<tr><td>Max gust</td><td>${fmt(r.gust)} km/h</td></tr>`;
-          if (r.hol) html += `<tr><td>Holiday</td><td>${r.holName || "yes"}</td></tr>`;
+          const gs = groupsOn(d);
+          if (gs.length) html += `<tr><td>Holidays</td><td>${gs.map(x => x.g.key).join(", ")}</td></tr>`;
           html += "</table>";
         }
         showTip(html, e.clientX, e.clientY);
@@ -418,7 +448,7 @@ function renderHeatmap(host) {
     el("span", {}, el("span", { class: "sw", style: `box-shadow:inset 0 0 0 1px ${GRID}` }),
       document.createTextNode("no data")),
     el("span", {}, el("span", { class: "sw", style: `background:${SERIES[3]};height:5px;` }),
-      document.createTextNode("UK school holiday"))));
+      document.createTextNode("school holiday"))));
 }
 
 /* ---------- compare (multi-line) ---------- */
@@ -432,7 +462,12 @@ function renderCompare(host) {
     sel.appendChild(el("option", { value: k, text: m.label + (m.unit ? ` (${m.unit})` : "") }));
   sel.value = metric;
   subRow.appendChild(sel);
-  subRow.append("  — shaded bands are UK school holidays.");
+  subRow.append("   Shade holidays: ");
+  const holSel = el("select", { onchange: e => { holOverlay = e.target.value; render(); } });
+  holSel.appendChild(el("option", { value: "", text: "none" }));
+  for (const g of HOL_GROUPS) holSel.appendChild(el("option", { value: g.key, text: g.key }));
+  holSel.value = holOverlay;
+  subRow.appendChild(holSel);
   host.appendChild(subRow);
 
   if (!selection.length) { host.appendChild(el("p", { class: "sub", text: "Select at least one resort above." })); return; }
@@ -470,9 +505,10 @@ function renderCompare(host) {
   }
   const y = v => m.t + (1 - (v - dom[0]) / (dom[1] - dom[0])) * (h - m.t - m.b);
 
-  // holiday bands
+  // holiday bands for the selected country/zone
   let bandStart = null;
-  const holDates = new Set(ROWS.filter(r => r.hol && inRange(r)).map(r => r.date));
+  const holGroup = HOL_GROUPS.find(g => g.key === holOverlay);
+  const holDates = new Set(holGroup ? dates.filter(d => groupCovers(holGroup, d)) : []);
   const sorted = [...dates];
   for (let i = 0; i <= sorted.length; i++) {
     const d = sorted[i], isHol = d && holDates.has(d);
@@ -533,8 +569,8 @@ function renderCompare(host) {
     vline.setAttribute("x1", x(nearest)); vline.setAttribute("x2", x(nearest));
     vline.setAttribute("visibility", "visible");
     let html = `<div class="t-date">${nearest}</div>`;
-    const anyHol = ROWS.find(r => r.date === nearest && r.hol);
-    if (anyHol) html += `<div class="t-sub">${anyHol.holName || "UK school holiday"}</div>`;
+    const gs = groupsOn(nearest);
+    if (gs.length) html += `<div class="t-sub">Holidays: ${gs.map(x => x.g.key).join(", ")}</div>`;
     html += "<table>";
     const vals = selection.map(id => {
       const r = byResort.get(id).get(nearest);
