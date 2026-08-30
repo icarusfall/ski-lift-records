@@ -86,7 +86,7 @@
         {% set current_area.value = area_key %}
         <tr class="area-header">
           <td colspan="8">
-            {% set flags = {"FR": "🇫🇷", "CH": "🇨🇭", "IT": "🇮🇹", "AT": "🇦🇹"} %}
+            {% set flags = {"FR": "🇫🇷", "CH": "🇨🇭", "IT": "🇮🇹", "AT": "🇦🇹", "ES": "🇪🇸", "AD": "🇦🇩"} %}
             {{ flags.get(row.country, row.country) }} {{ row.area or row.country }}
           </td>
         </tr>

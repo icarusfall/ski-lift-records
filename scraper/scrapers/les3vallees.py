@@ -27,7 +27,7 @@ Status mapping:
 import requests
 from collections import Counter
 from bs4 import BeautifulSoup
-from .base import LiftStatus, ResortSnapshot
+from .base import LiftStatus, ResortSnapshot, normalise_status
 
 URL = "https://www.les3vallees.com/en/live/lifts-and-trails-opening"
 
@@ -50,14 +50,14 @@ SECTION_MAP = {
 STATUS_MAP = {
     "tag--success": "open",
     "tag--error": "closed",
-    "tag--warning": "open",    # Forecast = scheduled opening
-    "tag--disabled": None,     # off season
+    "tag--warning": "seasonal",   # Forecast: due to open later, not open now
+    "tag--disabled": "seasonal",  # off season — kept, so the total stays honest
 }
 
 
 def _parse_section(body) -> list[LiftStatus]:
     """Parse lift items from an accordion body div."""
-    raw: list[tuple[str, str]] = []  # (name, status)
+    raw: list[tuple[str, str, str]] = []  # (name, status, raw_status)
     for table_item in body.find_all(class_="prl__state-table-item"):
         name_span = table_item.find(class_="prl__state-table-action-name")
         if not (name_span and "Lifts" in name_span.get_text()):
@@ -75,23 +75,24 @@ def _parse_section(body) -> list[LiftStatus]:
             if not name:
                 continue
 
-            status = None
+            status, raw_status = None, tag.get_text(strip=True)
             for cls in tag.get("class", []):
                 if cls in STATUS_MAP:
                     status = STATUS_MAP[cls]
+                    raw_status = raw_status or cls
                     break
             if status:
-                raw.append((name, status))
+                raw.append((name, status, raw_status))
 
     # Deduplicate: if same name appears more than once, append " 2", " 3", etc.
-    counts: Counter = Counter(n for n, _ in raw)
+    counts: Counter = Counter(n for n, _, _ in raw)
     seen: Counter = Counter()
     lifts: list[LiftStatus] = []
-    for name, status in raw:
+    for name, status, raw_status in raw:
         if counts[name] > 1:
             seen[name] += 1
             name = f"{name} {seen[name]}"
-        lifts.append(LiftStatus(name=name, status=status))
+        lifts.append(LiftStatus(name=name, status=status, raw_status=raw_status))
     return lifts
 
 

@@ -18,7 +18,7 @@ Sectors and which resort_id they map to:
 """
 
 import requests
-from .base import LiftStatus, ResortSnapshot
+from .base import LiftStatus, ResortSnapshot, normalise_status
 
 URL = "https://api.lesmenuires.com/get/json/area.json"
 
@@ -35,12 +35,18 @@ HEADERS = {
 SAINT_MARTIN_SECTORS = {"saint-martin-de-belleville"}
 
 
-def _status(raw: str) -> str | None:
-    if raw in ("open", "scheduled"):
+def _status(raw: str) -> str:
+    # 'scheduled' means due to open later in the season, not open now, and
+    # 'delayed' is a temporary hold — both were previously flattened.
+    if raw == "open":
         return "open"
-    if raw in ("closed", "delayed"):
+    if raw == "closed":
         return "closed"
-    return None
+    if raw == "delayed":
+        return "hold"
+    if raw == "scheduled":
+        return "seasonal"
+    return normalise_status(raw)
 
 
 def _build_lifts(raw: list[dict]) -> list[LiftStatus]:
@@ -67,6 +73,7 @@ def _build_lifts(raw: list[dict]) -> list[LiftStatus]:
             status=e["status"],
             lift_type=e["lift_type"],
             is_link=e["is_link"],
+            raw_status=e.get("raw_status", ""),
         ))
     return lifts
 
@@ -85,15 +92,15 @@ def _scrape_both() -> tuple[list[LiftStatus], list[LiftStatus], str | None]:
         sector_name = sector.get("name", "")
         target_raw = saint_martin_raw if sector_name.lower() in SAINT_MARTIN_SECTORS else menuires_raw
         for lift in sector.get("list", []):
-            status = _status(lift.get("status", ""))
-            if status:
-                target_raw.append({
-                    "name": lift["name"],
-                    "status": status,
-                    "lift_type": lift.get("type", ""),
-                    "is_link": lift.get("is_link", False),
-                    "sector": sector_name,
-                })
+            raw_status = lift.get("status", "")
+            target_raw.append({
+                "name": lift["name"],
+                "status": _status(raw_status),
+                "raw_status": raw_status,
+                "lift_type": lift.get("type", ""),
+                "is_link": lift.get("is_link", False),
+                "sector": sector_name,
+            })
 
     return _build_lifts(menuires_raw), _build_lifts(saint_martin_raw), None
 

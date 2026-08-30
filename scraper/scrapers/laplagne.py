@@ -13,7 +13,7 @@ Only entries with type == "SKI_LIFT" are included (excludes trails/pistes).
 """
 
 import requests
-from .base import LiftStatus, ResortSnapshot
+from .base import LiftStatus, ResortSnapshot, normalise_status
 
 BASE = "https://ouvertures.la-plagne.com/"
 
@@ -52,17 +52,14 @@ def scrape(resort_id: str = "la-plagne") -> ResortSnapshot:
     lifts: list[LiftStatus] = []
     for lift_id, lift in static_map.items():
         raw_status = dyn_map.get(lift_id, "")
-        if raw_status == "OPEN":
-            status = "open"
-        elif raw_status == "CLOSED":
-            status = "closed"
-        else:
-            continue  # unknown status, skip
-
+        # Every lift is kept, whatever its status. Dropping the ones that were
+        # neither OPEN nor CLOSED is what made this scraper report totals like
+        # 3/77: out-of-season lifts vanished from the denominator entirely.
         lifts.append(LiftStatus(
             name=lift["name"].rstrip("."),
-            status=status,
+            status=normalise_status(raw_status),
             lift_type=lift.get("liftType", ""),
+            raw_status=raw_status,
         ))
 
     if lifts:

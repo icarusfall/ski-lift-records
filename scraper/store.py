@@ -140,10 +140,10 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None,
                 lift_row = cur.fetchone()
                 if lift_row:
                     cur.execute("""
-                        INSERT INTO lift_readings (snapshot_id, lift_id, status)
-                        VALUES (%s, %s, %s)
+                        INSERT INTO lift_readings (snapshot_id, lift_id, status, raw_status)
+                        VALUES (%s, %s, %s, %s)
                         ON CONFLICT DO NOTHING
-                    """, (snapshot_id, lift_row["id"], lift.status))
+                    """, (snapshot_id, lift_row["id"], lift.status, lift.raw_status or None))
 
         # Save individual pistes (only if we have named pistes)
         named_pistes = [p for p in snap.pistes if p.name]

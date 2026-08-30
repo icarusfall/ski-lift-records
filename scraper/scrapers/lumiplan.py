@@ -17,9 +17,10 @@ Known working URLs:
   Meribel      https://www.seemeribel.com/lifts/status
 """
 
+import re
 import requests
 from bs4 import BeautifulSoup
-from .base import LiftStatus, ResortSnapshot
+from .base import LiftStatus, ResortSnapshot, normalise_status
 
 HEADERS = {
     "User-Agent": (
@@ -71,14 +72,14 @@ def scrape(resort_id: str, url: str) -> ResortSnapshot:
         if not img:
             continue
         src = img.get("src", "")
-        if "/etats/O." in src:
-            status = "open"
-        elif "/etats/F." in src:
-            status = "closed"
-        else:
+        code_match = re.search(r"/etats/([A-Za-z0-9]+)\.", src)
+        if not code_match:
             continue
+        raw = code_match.group(1)
+        # Codes beyond O/F are recorded as-is rather than dropping the lift.
+        status = {"O": "open", "F": "closed", "P": "hold"}.get(raw, "unknown")
 
-        lifts.append(LiftStatus(name=name, status=status))
+        lifts.append(LiftStatus(name=name, status=status, raw_status=raw))
 
     if lifts:
         snapshot.lifts = lifts

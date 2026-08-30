@@ -10,7 +10,7 @@ Page structure (SSR):
 
 import requests
 from bs4 import BeautifulSoup
-from .base import LiftStatus, ResortSnapshot
+from .base import LiftStatus, ResortSnapshot, normalise_status
 
 URL = "https://www.saas-fee.ch/en/open-lifts/saas-fee"
 
@@ -59,12 +59,13 @@ def scrape(resort_id: str = "saas-fee") -> ResortSnapshot:
         if name.endswith(("(Klassisch)", "(Skating)")):
             continue
 
-        # Status from div.status-text ("open" / "closed")
+        # Status from div.status-text ("open" / "closed" / other wording)
         status_div = row.find("div", class_="status-text")
         if status_div:
-            text = status_div.get_text(strip=True).lower()
-            if text in ("open", "closed"):
-                lifts.append(LiftStatus(name=name, status=text))
+            text = status_div.get_text(strip=True)
+            if text:
+                lifts.append(LiftStatus(name=name, status=normalise_status(text),
+                                        raw_status=text))
                 continue
 
         # Fallback: status-icon circle-open / circle-closed
@@ -72,9 +73,11 @@ def scrape(resort_id: str = "saas-fee") -> ResortSnapshot:
         if icon_div:
             icon_classes = icon_div.get("class", [])
             if "circle-open" in icon_classes:
-                lifts.append(LiftStatus(name=name, status="open"))
+                lifts.append(LiftStatus(name=name, status="open",
+                                        raw_status="circle-open"))
             elif "circle-closed" in icon_classes:
-                lifts.append(LiftStatus(name=name, status="closed"))
+                lifts.append(LiftStatus(name=name, status="closed",
+                                        raw_status="circle-closed"))
 
     if lifts:
         snapshot.lifts = lifts

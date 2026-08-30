@@ -234,8 +234,17 @@ def api_lift_stats():
     with cursor() as cur:
         cur.execute("""
             SELECT l.resort_id, r.name AS resort_name, l.name, l.is_link,
-                   SUM(CASE WHEN lr.status = 'open' THEN 1 ELSE 0 END) AS days_open,
-                   COUNT(*) AS days_total
+                   COUNT(*) FILTER (WHERE lr.status = 'open')     AS days_open,
+                   COUNT(*) FILTER (WHERE lr.status = 'closed')   AS days_closed,
+                   COUNT(*) FILTER (WHERE lr.status = 'hold')     AS days_hold,
+                   COUNT(*) FILTER (WHERE lr.status = 'seasonal') AS days_seasonal,
+                   -- days the lift was meant to be running: seasonal closures
+                   -- are excluded so they don't dilute a lift's reliability
+                   COUNT(*) FILTER (WHERE lr.status IN ('open', 'closed', 'hold'))
+                       AS days_operational,
+                   COUNT(*) AS days_total,
+                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT lr.raw_status)
+                       FILTER (WHERE lr.status <> 'open'), NULL) AS closed_reasons
             FROM lift_readings lr
             JOIN lifts l ON l.id = lr.lift_id
             JOIN snapshots s ON s.id = lr.snapshot_id

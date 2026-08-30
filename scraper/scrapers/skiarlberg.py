@@ -25,7 +25,7 @@ Difficulty text values:
 
 import requests
 from bs4 import BeautifulSoup
-from .base import LiftStatus, PisteStatus, ResortSnapshot
+from .base import LiftStatus, PisteStatus, ResortSnapshot, normalise_status
 
 BASE = "https://www.skiarlberg.at"
 LIFTS_PATH = "/en/live-info/table/lifts"
@@ -81,10 +81,14 @@ def _parse_lifts(soup: BeautifulSoup) -> list[LiftStatus]:
         if not (name_td and state_td):
             continue
         name = name_td.get_text(strip=True)
-        status = state_td.get_text(strip=True).lower()
+        raw = state_td.get_text(strip=True)
         lift_type = type_td.get_text(strip=True) if type_td else ""
-        if status in ("open", "closed"):
-            lifts.append(LiftStatus(name=name, status=status, lift_type=lift_type))
+        if not name:
+            continue
+        # Rows with any state wording are kept; previously anything other than
+        # open/closed was dropped, quietly shrinking the lift total.
+        lifts.append(LiftStatus(name=name, status=normalise_status(raw),
+                                lift_type=lift_type, raw_status=raw))
     return lifts
 
 

@@ -13,7 +13,7 @@ The Zermatt link lifts are identified by name keywords.
 
 import re
 import requests
-from .base import LiftStatus, PisteStatus, ResortSnapshot
+from .base import LiftStatus, PisteStatus, ResortSnapshot, normalise_status
 
 URL = "https://www.cervinia.it/en/impianti"
 
@@ -62,21 +62,24 @@ def scrape(resort_id: str = "cervinia") -> ResortSnapshot:
             deduped.append((pos, name))
     lift_names_positions = deduped
 
+    # Any status letter is captured, not just O/F, so a code the site adds
+    # later shows up as 'unknown' rather than being read as the next lift's.
     status_positions = [
         (m.start(), m.group(1))
-        for m in re.finditer(r'impianto-status-([OF])"', html)
+        for m in re.finditer(r'impianto-status-([A-Z]+)"', html)
     ]
+    code_map = {"O": "open", "F": "closed", "P": "hold"}
 
     for name_pos, name in lift_names_positions:
         following = [(pos, s) for pos, s in status_positions if pos > name_pos]
         if following:
             closest_pos, closest_status = following[0]
             if closest_pos - name_pos < 2000:
-                status = "open" if closest_status == "O" else "closed"
                 snapshot.lifts.append(LiftStatus(
                     name=name,
-                    status=status,
-                    is_link=_is_link(name)
+                    status=code_map.get(closest_status, "unknown"),
+                    is_link=_is_link(name),
+                    raw_status=closest_status,
                 ))
 
     # ── Pistes ─────────────────────────────────────────────────────────────

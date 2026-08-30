@@ -21,7 +21,7 @@ Known working URLs:
 
 import requests
 from bs4 import BeautifulSoup
-from .base import LiftStatus, ResortSnapshot
+from .base import LiftStatus, ResortSnapshot, normalise_status
 
 HEADERS = {
     "User-Agent": (
@@ -49,12 +49,19 @@ def _picto_type(row) -> str:
 
 
 def _status_from_title(title: str) -> str | None:
+    """Normalise the French status wording, keeping 'Prévision' distinct.
+
+    Prévision means scheduled to open later, which is not the same as open —
+    counting it as open overstated how much of the resort was running.
+    """
     t = title.lower()
     if "ferm" in t:           # covers Fermé and encoding variants
         return "closed"
-    if "ouvert" in t or "pr" in t:  # Ouvert = open, Prévision = open as scheduled
+    if "prévision" in t or "prevision" in t:
+        return "seasonal"
+    if "ouvert" in t:
         return "open"
-    return None
+    return normalise_status(title)
 
 
 def scrape(resort_id: str, url: str) -> ResortSnapshot:
@@ -83,6 +90,7 @@ def scrape(resort_id: str, url: str) -> ResortSnapshot:
 
         # Status is in the title attribute of the last-column span or img
         status: str | None = None
+        raw = ""
         cols = row.find_all("div", recursive=False)
         if cols:
             last_col = cols[-1]
@@ -90,11 +98,12 @@ def scrape(resort_id: str, url: str) -> ResortSnapshot:
                 title = elem.get("title", "")
                 if title:
                     status = _status_from_title(title)
+                    raw = title
                     if status:
                         break
 
         if name and status:
-            lifts.append(LiftStatus(name=name, status=status))
+            lifts.append(LiftStatus(name=name, status=status, raw_status=raw))
 
     if lifts:
         snapshot.lifts = lifts

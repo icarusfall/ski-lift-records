@@ -180,6 +180,11 @@ CREATE TABLE IF NOT EXISTS holiday_periods (
     UNIQUE (country, region, name)
 );
 CREATE INDEX IF NOT EXISTS idx_holiday_periods_dates ON holiday_periods (start_date, end_date);
+
+-- The site's own wording for a lift's state, kept verbatim alongside our
+-- normalised status so "closed" can later be split into wind hold, seasonal
+-- closure, maintenance and so on.
+ALTER TABLE lift_readings ADD COLUMN IF NOT EXISTS raw_status VARCHAR(100);
 """
 
 

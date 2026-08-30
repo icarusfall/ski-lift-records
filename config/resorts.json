@@ -429,5 +429,31 @@
     "primary_url": "https://www.montgenevre.com/en/",
     "bergfex_slug": "montgenevre",
     "notes": "Voie Lactee; southernmost French pole, Mediterranean-influenced - the El Nino/NAO contrast case"
+  },
+  {
+    "id": "grandvalira",
+    "name": "Grandvalira",
+    "country": "AD",
+    "area": "Pyrenees",
+    "top_altitude_m": 2640,
+    "latitude": 42.5389,
+    "longitude": 1.7139,
+    "scraper": "bergfex",
+    "primary_url": "https://www.grandvalira.com/en",
+    "bergfex_slug": "grandvalira",
+    "notes": "Andorra; largest Pyrenean area. Southern storm track responds differently to the Alps - the ENSO/NAO contrast case"
+  },
+  {
+    "id": "baqueira-beret",
+    "name": "Baqueira-Beret",
+    "country": "ES",
+    "area": "Pyrenees",
+    "top_altitude_m": 2610,
+    "latitude": 42.6989,
+    "longitude": 0.9331,
+    "scraper": "bergfex",
+    "primary_url": "https://www.baqueira.es/en",
+    "bergfex_slug": "baqueira-beret",
+    "notes": "Val d'Aran, Spain; Atlantic-facing Pyrenean control"
   }
 ]

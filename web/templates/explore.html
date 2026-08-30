@@ -92,9 +92,12 @@
   .badge { background: var(--wash); border: 1px solid var(--baseline); color: var(--ink-2);
            font-size: 0.62rem; border-radius: 3px; padding: 0 4px; margin-left: 4px;
            vertical-align: 1px; }
-  .lift-track { flex: 1; max-width: 520px; height: 8px; background: var(--wash);
-                border-radius: 4px; }
-  .lift-fill { height: 8px; background: var(--s1); border-radius: 4px; }
+  .lift-track { flex: 1; max-width: 520px; height: 9px; background: var(--wash);
+                border-radius: 4px; display: flex; overflow: hidden; gap: 2px; }
+  .lift-fill { height: 9px; background: var(--s1); border-radius: 4px; }
+  .seg { height: 9px; }
+  .seg:first-child { border-radius: 4px 0 0 4px; }
+  .seg:last-child  { border-radius: 0 4px 4px 0; }
   .lift-val { font-size: 0.76rem; color: var(--ink-2); font-variant-numeric: tabular-nums;
               width: 70px; }
   table.league { border-collapse: collapse; width: 100%; }
@@ -666,20 +669,59 @@ function renderLifts(host) {
   subRow.appendChild(sel);
   host.appendChild(subRow);
 
+  // Status colours are the fixed status palette, never reused for series,
+  // and always paired with the legend labels below.
+  const SEG = [
+    ["days_open",     "#0ca30c", "open"],
+    ["days_hold",     "#fab219", "on hold"],
+    ["days_closed",   "#d03b3b", "closed"],
+    ["days_seasonal", "#c3c2b7", "out of season"],
+  ];
+
   const lifts = LIFTS.filter(l => l.resort_id === liftPick)
-    .map(l => ({ ...l, pct: l.days_total ? 100 * l.days_open / l.days_total : 0 }))
+    .map(l => ({ ...l, pct: l.days_operational ? 100 * l.days_open / l.days_operational : 0 }))
     .sort((a, b) => a.pct - b.pct);
+
+  const lg = el("div", { class: "legend" });
+  for (const [, colour, label] of SEG) {
+    const item = el("span", {}, el("span", { class: "dot" }), document.createTextNode(label));
+    item.querySelector(".dot").style.background = colour;
+    lg.appendChild(item);
+  }
+  host.appendChild(lg);
+
   for (const l of lifts) {
     const nameCell = el("div", { class: "lift-name", text: l.name });
     if (l.is_link) nameCell.appendChild(el("span", { class: "badge", text: "LINK" }));
-    const fill = el("div", { class: "lift-fill" }); fill.style.width = l.pct.toFixed(1) + "%";
-    const row = el("div", { class: "lift-row" }, nameCell,
-      el("div", { class: "lift-track" }, fill),
-      el("div", { class: "lift-val", text: fmt(l.pct) + "% · " + l.days_open + "/" + l.days_total }));
-    host.appendChild(row);
+
+    const track = el("div", { class: "lift-track" });
+    const total = l.days_total || 1;
+    for (const [key, colour, label] of SEG) {
+      const n = l[key] || 0;
+      if (!n) continue;
+      const seg = el("div", { class: "seg" });
+      seg.style.width = (100 * n / total) + "%";
+      seg.style.background = colour;
+      seg.addEventListener("mousemove", e => showTip(
+        `<div class="t-date">${l.name}</div><div class="t-sub">${label}</div>` +
+        `<table><tr><td>${n} of ${l.days_total} days</td></tr></table>`, e.clientX, e.clientY));
+      seg.addEventListener("mouseleave", hideTip);
+      track.appendChild(seg);
+    }
+
+    const reasons = (l.closed_reasons || []).filter(Boolean);
+    const val = el("div", { class: "lift-val",
+      text: fmt(l.pct) + "% · " + l.days_open + "/" + l.days_operational });
+    if (reasons.length) {
+      val.title = "Reported as: " + reasons.join(", ");
+      val.style.cursor = "help";
+    }
+    host.appendChild(el("div", { class: "lift-row" }, nameCell, track, val));
   }
   host.appendChild(el("p", { class: "hint",
-    text: "LINK marks lifts that connect to a neighbouring ski area — for Cervinia, the Zermatt connection." }));
+    text: "Percentage is open days out of days the lift was meant to be running "
+        + "(out-of-season days excluded). Bars show every day on record. LINK marks "
+        + "lifts connecting to a neighbouring ski area — for Cervinia, the Zermatt connection." }));
 }
 
 /* ---------- league table ---------- */

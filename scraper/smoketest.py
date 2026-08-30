@@ -51,6 +51,17 @@ def check(resort: dict) -> dict:
                       detail=f"only {snap.lifts_total} lifts parsed")
         return result
 
+    # An unrecognised status code is excluded from the lift total, so it must
+    # be visible: silently shrinking totals is how bad data gets in.
+    unknown = [l.raw_status or "<blank>" for l in snap.lifts if l.status == "unknown"]
+    if unknown:
+        codes = sorted(set(unknown))
+        result.update(status="SUSPECT",
+                      detail=f"{len(unknown)} lift(s) with unrecognised status "
+                             f"{', '.join(repr(c) for c in codes[:4])} "
+                             f"— add to normalise_status()")
+        return result
+
     detail = f"{snap.lifts_open}/{snap.lifts_total} lifts"
     if snap.snow_depth_mountain_cm is not None:
         detail += f", snow {snap.snow_depth_mountain_cm}cm"
