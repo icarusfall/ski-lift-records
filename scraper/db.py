@@ -139,6 +139,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 
 ALTER TABLE resorts ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
+
+CREATE TABLE IF NOT EXISTS source_readings (
+    id              SERIAL PRIMARY KEY,
+    snapshot_id     INTEGER REFERENCES snapshots(id) ON DELETE CASCADE,
+    source          VARCHAR(50) NOT NULL,
+    lifts_open      INTEGER,
+    lifts_total     INTEGER,
+    pistes_open_km  NUMERIC(7,1),
+    pistes_total_km NUMERIC(7,1),
+    error           TEXT,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    UNIQUE (snapshot_id, source)
+);
+CREATE INDEX IF NOT EXISTS idx_source_readings_snapshot ON source_readings (snapshot_id);
 """
 
 

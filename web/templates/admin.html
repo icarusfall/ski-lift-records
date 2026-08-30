@@ -115,7 +115,7 @@
         <thead>
           <tr>
             <th>Resort</th><th>Scraper</th><th>Last snapshot</th><th>Lifts</th>
-            <th>Errors (7d)</th><th>Source</th><th></th><th></th>
+            <th>Errors (7d)</th><th>Sources</th><th></th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -141,7 +141,20 @@
                 <span class="err">{{ r.err_days }}/7</span>
               {% else %}<span class="ok">0/7</span>{% endif %}
             </td>
-            <td class="muted">{{ r.source or "—" }}</td>
+            <td class="muted">
+              {% if r.readings %}
+                {% if r.diverged %}
+                  <span class="err" title="Sources disagree by more than 20 percentage points — one scraper is likely wrong">⚠ diverged</span><br>
+                {% endif %}
+                {% for rd in r.readings %}
+                  {{ rd.source }}:
+                  {% if rd.error %}<span class="err" title="{{ rd.error }}">err</span>
+                  {% elif rd.lifts_total %}{{ rd.lifts_open }}/{{ rd.lifts_total }}
+                  {% else %}—{% endif %}
+                  {% if not loop.last %}<br>{% endif %}
+                {% endfor %}
+              {% else %}{{ r.source or "—" }}{% endif %}
+            </td>
             <td>
               <form method="post" action="/admin/run/{{ r.id }}" class="inline">
                 <button type="submit" class="subtle">Run now</button>

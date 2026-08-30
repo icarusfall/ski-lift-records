@@ -20,6 +20,22 @@ class PisteStatus:
 
 
 @dataclass
+class SourceReading:
+    """One source's aggregate view of a resort on one day.
+
+    Every snapshot records a reading per source consulted (primary scraper
+    and bergfex), so sources can be cross-validated even when one of them
+    is silently wrong rather than erroring.
+    """
+    source: str
+    lifts_open: Optional[int] = None
+    lifts_total: Optional[int] = None
+    pistes_open_km: Optional[float] = None
+    pistes_total_km: Optional[float] = None
+    error: Optional[str] = None
+
+
+@dataclass
 class ResortSnapshot:
     resort_id: str
     source: str
@@ -41,6 +57,7 @@ class ResortSnapshot:
     precipitation_mm: Optional[float] = None
     weather_code: Optional[int] = None
     error: Optional[str] = None
+    source_readings: list["SourceReading"] = field(default_factory=list)
 
     @property
     def lifts_open(self) -> int:

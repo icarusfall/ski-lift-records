@@ -257,7 +257,7 @@ def get_resort_health():
     with cursor() as cur:
         cur.execute("""
             SELECT r.id, r.name, r.enabled, r.scraper_type,
-                   ls.snapshot_date AS last_date,
+                   ls.id AS snap_id, ls.snapshot_date AS last_date,
                    ls.lifts_open, ls.lifts_total, ls.source, ls.scrape_error,
                    err.err_days
             FROM resorts r
@@ -275,7 +275,31 @@ def get_resort_health():
             ) err ON TRUE
             ORDER BY r.name
         """)
-        return cur.fetchall()
+        rows = cur.fetchall()
+
+        # Per-source readings for each resort's latest snapshot, plus a
+        # divergence flag when two sources disagree by >20 pct-points.
+        snap_ids = [r["snap_id"] for r in rows if r["snap_id"] is not None]
+        readings = {}
+        if snap_ids:
+            cur.execute("""
+                SELECT snapshot_id, source, lifts_open, lifts_total, error
+                FROM source_readings WHERE snapshot_id = ANY(%s)
+                ORDER BY source
+            """, (snap_ids,))
+            for rd in cur.fetchall():
+                readings.setdefault(rd["snapshot_id"], []).append(rd)
+
+    result = []
+    for r in rows:
+        r = dict(r)
+        rds = readings.get(r["snap_id"], [])
+        pcts = [100 * rd["lifts_open"] / rd["lifts_total"]
+                for rd in rds if rd["lifts_total"]]
+        r["readings"] = rds
+        r["diverged"] = len(pcts) >= 2 and (max(pcts) - min(pcts)) > 20
+        result.append(r)
+    return result
 
 
 @app.route("/admin")

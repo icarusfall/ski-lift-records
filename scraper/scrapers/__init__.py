@@ -1,50 +1,79 @@
 """Scraper registry — maps scraper type name to scrape function."""
-from .base import ResortSnapshot
+from .base import ResortSnapshot, SourceReading
 from . import cervinia, saas_fee, lumiplan, kgpistes, laplagne, lesmenuires, les3vallees, skiarlberg, bergfex
+
+
+def _reading(snap: ResortSnapshot) -> SourceReading:
+    """Condense a snapshot into a per-source aggregate reading."""
+    ok = not snap.error
+    return SourceReading(
+        source=snap.source,
+        lifts_open=snap.lifts_open if ok and snap.lifts_total else None,
+        lifts_total=snap.lifts_total if ok and snap.lifts_total else None,
+        pistes_open_km=snap.pistes_open_km if ok else None,
+        pistes_total_km=snap.pistes_total_km if ok else None,
+        error=snap.error,
+    )
+
+
+def _run_primary(resort: dict) -> ResortSnapshot:
+    scraper_type = resort.get("scraper")
+
+    if scraper_type == "cervinia":
+        return cervinia.scrape(resort["id"])
+    if scraper_type == "saas-fee":
+        return saas_fee.scrape(resort["id"])
+    if scraper_type == "lumiplan":
+        return lumiplan.scrape(resort["id"], resort["primary_url"])
+    if scraper_type == "kgpistes":
+        return kgpistes.scrape(resort["id"], resort["primary_url"])
+    if scraper_type == "laplagne":
+        return laplagne.scrape(resort["id"])
+    if scraper_type == "lesmenuires":
+        return lesmenuires.scrape(resort["id"])
+    if scraper_type == "les3vallees":
+        return les3vallees.scrape(resort["id"])
+    if scraper_type == "skiarlberg":
+        return skiarlberg.scrape(resort["id"])
+
+    snap = ResortSnapshot(resort_id=resort["id"], source="unknown")
+    snap.error = f"Unknown scraper type: {scraper_type}"
+    return snap
 
 
 def run_scraper(resort: dict) -> ResortSnapshot:
     scraper_type = resort.get("scraper", "bergfex")
 
+    # Bergfex-only resorts: one source, one reading.
     if scraper_type == "bergfex":
-        return bergfex.scrape(resort["id"], resort["bergfex_slug"])
-
-    # Primary scrapers
-    if scraper_type == "cervinia":
-        snap = cervinia.scrape(resort["id"])
-    elif scraper_type == "saas-fee":
-        snap = saas_fee.scrape(resort["id"])
-    elif scraper_type == "lumiplan":
-        snap = lumiplan.scrape(resort["id"], resort["primary_url"])
-    elif scraper_type == "kgpistes":
-        snap = kgpistes.scrape(resort["id"], resort["primary_url"])
-    elif scraper_type == "laplagne":
-        snap = laplagne.scrape(resort["id"])
-    elif scraper_type == "lesmenuires":
-        snap = lesmenuires.scrape(resort["id"])
-    elif scraper_type == "les3vallees":
-        snap = les3vallees.scrape(resort["id"])
-    elif scraper_type == "skiarlberg":
-        snap = skiarlberg.scrape(resort["id"])
-    else:
-        snap = ResortSnapshot(resort_id=resort["id"], source="unknown")
-        snap.error = f"Unknown scraper type: {scraper_type}"
+        snap = bergfex.scrape(resort["id"], resort["bergfex_slug"])
+        snap.source_readings = [_reading(snap)]
         return snap
 
-    # Automatic bergfex fallback if primary scraper fails
-    if snap.error and resort.get("bergfex_slug"):
-        fallback = bergfex.scrape(resort["id"], resort["bergfex_slug"])
-        fallback.source = f"bergfex.com (fallback from {scraper_type})"
-        return fallback
+    primary = _run_primary(resort)
+    readings = [_reading(primary)]
 
-    # Fetch snow/conditions data from bergfex schneebericht for primary-scraped resorts
+    # Always also scrape bergfex so both sources are recorded side by side —
+    # this catches primary scrapers that go wrong without erroring.
+    bfx = None
     if resort.get("bergfex_slug"):
-        snow = bergfex.get_snow_report(resort["bergfex_slug"])
-        snap.snow_depth_mountain_cm = snow.get("snow_depth_mountain_cm")
-        snap.snow_depth_valley_cm   = snow.get("snow_depth_valley_cm")
-        snap.snow_condition         = snow.get("snow_condition")
-        snap.last_snowfall_date     = snow.get("last_snowfall_date")
-        snap.piste_conditions       = snow.get("piste_conditions")
-        snap.avalanche_danger       = snow.get("avalanche_danger")
+        bfx = bergfex.scrape(resort["id"], resort["bergfex_slug"])
+        readings.append(_reading(bfx))
 
-    return snap
+    if primary.error and bfx is not None:
+        # Fall back to the bergfex snapshot for the headline numbers
+        bfx.source = f"bergfex.com (fallback from {scraper_type})"
+        bfx.source_readings = readings
+        return bfx
+
+    # Primary succeeded: enrich it with bergfex snow/conditions data
+    if bfx is not None:
+        primary.snow_depth_mountain_cm = bfx.snow_depth_mountain_cm
+        primary.snow_depth_valley_cm   = bfx.snow_depth_valley_cm
+        primary.snow_condition         = bfx.snow_condition
+        primary.last_snowfall_date     = bfx.last_snowfall_date
+        primary.piste_conditions       = bfx.piste_conditions
+        primary.avalanche_danger       = bfx.avalanche_danger
+
+    primary.source_readings = readings
+    return primary

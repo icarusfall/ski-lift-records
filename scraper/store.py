@@ -89,6 +89,22 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None) -> in
             return None
         snapshot_id = row["id"]
 
+        # Save per-source aggregate readings (primary + bergfex side by side)
+        for rd in snap.source_readings:
+            cur.execute("""
+                INSERT INTO source_readings
+                    (snapshot_id, source, lifts_open, lifts_total,
+                     pistes_open_km, pistes_total_km, error)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (snapshot_id, source) DO UPDATE SET
+                    lifts_open      = EXCLUDED.lifts_open,
+                    lifts_total     = EXCLUDED.lifts_total,
+                    pistes_open_km  = EXCLUDED.pistes_open_km,
+                    pistes_total_km = EXCLUDED.pistes_total_km,
+                    error           = EXCLUDED.error
+            """, (snapshot_id, rd.source, rd.lifts_open, rd.lifts_total,
+                  rd.pistes_open_km, rd.pistes_total_km, rd.error))
+
         # Save individual lifts (only if we have named lifts, i.e. from primary scrapers)
         named_lifts = [l for l in snap.lifts if not l.name.startswith("lift_")]
         if named_lifts:
