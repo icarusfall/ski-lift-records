@@ -118,6 +118,32 @@
 
   var popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
 
+  // A map that fails should say so rather than sit as a blank rectangle.
+  function fail(msg) {
+    var el = document.getElementById("map-error");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "map-error";
+      el.className = "warn";
+      el.style.cssText = "position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);" +
+        "max-width:32rem;background:#fff5f5;border-left:4px solid #c53030;color:#742a2a;" +
+        "border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.12);z-index:5;";
+      document.getElementById("map").appendChild(el);
+    }
+    el.textContent = msg;
+  }
+  map.on("error", function (e) {
+    var m = (e && e.error && e.error.message) || "unknown error";
+    fail("The map could not load: " + m);
+  });
+  var loadWatch = setTimeout(function () {
+    if (!map.isStyleLoaded()) {
+      fail("The map style did not finish loading. Tiles may be blocked by the "
+         + "network, or this browser may not support the renderer.");
+    }
+  }, 15000);
+  map.on("load", function () { clearTimeout(loadWatch); });
+
   function colourExpression() {
     // Interpolate the ramp over 0-100%, with unmatched lifts falling through
     // to a neutral grey rather than being drawn as if they never ran.
