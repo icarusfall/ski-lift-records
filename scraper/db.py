@@ -191,6 +191,41 @@ ALTER TABLE lift_readings ADD COLUMN IF NOT EXISTS raw_status VARCHAR(100);
 -- names like 'Loze A'/'Loze B' are different lifts, not a rename.
 ALTER TABLE lifts ADD COLUMN IF NOT EXISTS alias_of INTEGER REFERENCES lifts(id);
 CREATE INDEX IF NOT EXISTS idx_lifts_alias_of ON lifts (alias_of);
+
+-- Long-run daily weather from the ERA5 reanalysis (Open-Meteo archive API),
+-- one row per resort per day back to 1991. This is what makes a single season
+-- of lift observations useful: the resort data measures how lifts RESPOND to
+-- weather, and this measures how often that weather actually occurs.
+CREATE TABLE IF NOT EXISTS climate_daily (
+    resort_id       VARCHAR(50) REFERENCES resorts(id),
+    date            DATE NOT NULL,
+    wind_gust_max_kmh   NUMERIC(5,1),
+    wind_speed_max_kmh  NUMERIC(5,1),
+    temp_min_c          NUMERIC(4,1),
+    temp_max_c          NUMERIC(4,1),
+    temp_mean_c         NUMERIC(4,1),
+    snowfall_cm         NUMERIC(6,2),
+    precipitation_mm    NUMERIC(6,1),
+    precip_hours        NUMERIC(4,1),
+    sunshine_hours      NUMERIC(4,1),
+    -- Modelled snow reservoir at the requested elevation. At glacier altitudes
+    -- this runs to tens of metres (permanent snow/ice), so treat it as a
+    -- year-on-year relative signal, never as piste depth in cm.
+    snow_depth_model_m  NUMERIC(6,2),
+    weather_code        SMALLINT,
+    PRIMARY KEY (resort_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_climate_daily_date ON climate_daily (date);
+
+-- Monthly teleconnection indices. NAO drives Alpine winters far more than
+-- ENSO does, so both are recorded and neither is treated as a predictor.
+CREATE TABLE IF NOT EXISTS climate_indices (
+    index_name  VARCHAR(10) NOT NULL,
+    year        SMALLINT NOT NULL,
+    month       SMALLINT NOT NULL,
+    value       NUMERIC(6,2),
+    PRIMARY KEY (index_name, year, month)
+);
 """
 
 
