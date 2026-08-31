@@ -229,6 +229,68 @@ def api_holidays():
     return resp
 
 
+@app.route("/map")
+def map_view():
+    with cursor() as cur:
+        cur.execute("""
+            SELECT r.id, r.name, COUNT(g.osm_id) AS ways
+            FROM resorts r JOIN lift_geometry g ON g.resort_id = r.id
+            GROUP BY r.id, r.name ORDER BY r.name
+        """)
+        resorts = cur.fetchall()
+    return render_template("map.html", resorts=resorts,
+                           mapbox_token=os.environ.get("MAPBOX_TOKEN", ""))
+
+
+@app.route("/api/geometry/<resort_id>.json")
+def api_geometry(resort_id: str):
+    """Lift geometry as GeoJSON, carrying each lift's observed reliability."""
+    with cursor() as cur:
+        cur.execute("""
+            SELECT g.osm_id, g.name, g.aerialway, g.bearing_deg, g.length_m,
+                   g.geometry, g.lift_id, c.name AS lift_name, c.is_link,
+                   COUNT(lr.id) FILTER (WHERE lr.status IN ('open','closed','hold'))
+                       AS days_operational,
+                   COUNT(lr.id) FILTER (WHERE lr.status = 'open') AS days_open
+            FROM lift_geometry g
+            LEFT JOIN lifts c ON c.id = g.lift_id
+            LEFT JOIN lifts l2 ON COALESCE(l2.alias_of, l2.id) = c.id
+            LEFT JOIN lift_readings lr ON lr.lift_id = l2.id
+            WHERE g.resort_id = %s
+            GROUP BY g.osm_id, g.resort_id, g.name, g.aerialway, g.bearing_deg,
+                     g.length_m, g.geometry, g.lift_id, c.name, c.is_link
+        """, (resort_id,))
+        rows = cur.fetchall()
+
+    features = []
+    for r in rows:
+        coords = r["geometry"] if isinstance(r["geometry"], list) else json.loads(r["geometry"] or "[]")
+        if len(coords) < 2:
+            continue
+        operational = r["days_operational"] or 0
+        pct = round(100 * r["days_open"] / operational, 1) if operational else None
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": {
+                "osm_id": r["osm_id"],
+                "name": r["name"] or "(unnamed lift)",
+                "aerialway": r["aerialway"],
+                "bearing": r["bearing_deg"],
+                "length_m": r["length_m"],
+                "lift_name": r["lift_name"],
+                "is_link": bool(r["is_link"]),
+                # None where the lift was never matched to an observed one,
+                # which the map shows as "no data" rather than as zero.
+                "pct_open": pct,
+                "days_operational": operational,
+            },
+        })
+    resp = jsonify({"type": "FeatureCollection", "features": features})
+    resp.headers["Cache-Control"] = "public, max-age=1800"
+    return resp
+
+
 @app.route("/api/outlook.json")
 def api_outlook():
     """Expected conditions for a calendar window, per resort.
