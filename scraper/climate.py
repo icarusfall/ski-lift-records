@@ -45,6 +45,8 @@ DAILY_VARS = [
     "sunshine_duration",
     "snow_depth_max",
     "weather_code",
+    "wind_direction_10m_dominant",
+    "cloud_cover_mean",
 ]
 
 NAO_URL = ("https://www.cpc.ncep.noaa.gov/products/precip/CWlink/pna/"
@@ -130,6 +132,7 @@ def _rows(resort_id: str, daily: dict) -> list[tuple]:
             val("precipitation_hours", i),
             round(sun / 3600, 1) if sun is not None else None,
             val("snow_depth_max", i), val("weather_code", i),
+            val("wind_direction_10m_dominant", i), val("cloud_cover_mean", i),
         ))
     return out
 
@@ -143,7 +146,8 @@ def _store(rows: list[tuple]) -> int:
                 (resort_id, date, wind_gust_max_kmh, wind_speed_max_kmh,
                  temp_min_c, temp_max_c, temp_mean_c, snowfall_cm,
                  precipitation_mm, precip_hours, sunshine_hours,
-                 snow_depth_model_m, weather_code)
+                 snow_depth_model_m, weather_code,
+                 wind_dir_dominant_deg, cloud_cover_pct)
             VALUES %s
             ON CONFLICT (resort_id, date) DO UPDATE SET
                 wind_gust_max_kmh  = EXCLUDED.wind_gust_max_kmh,
@@ -156,7 +160,9 @@ def _store(rows: list[tuple]) -> int:
                 precip_hours       = EXCLUDED.precip_hours,
                 sunshine_hours     = EXCLUDED.sunshine_hours,
                 snow_depth_model_m = EXCLUDED.snow_depth_model_m,
-                weather_code       = EXCLUDED.weather_code
+                weather_code       = EXCLUDED.weather_code,
+                wind_dir_dominant_deg = EXCLUDED.wind_dir_dominant_deg,
+                cloud_cover_pct       = EXCLUDED.cloud_cover_pct
         """, rows, page_size=2000)
     return len(rows)
 
@@ -202,14 +208,25 @@ def update_recent():
     with cursor() as cur:
         cur.execute("SELECT resort_id, MAX(date) AS last FROM climate_daily GROUP BY resort_id")
         latest = {r["resort_id"]: r["last"] for r in cur.fetchall()}
+        # Resorts fetched before a variable was added carry it as NULL
+        # throughout; those need the full range again, not a top-up.
+        cur.execute("""
+            SELECT resort_id FROM climate_daily
+            GROUP BY resort_id
+            HAVING COUNT(wind_dir_dominant_deg) = 0
+        """)
+        stale = {r["resort_id"] for r in cur.fetchall()}
 
     resorts = [r for r in load_resorts() if r.get("latitude")]
     todo = []
     for r in resorts:
-        have = latest.get(r["id"])
+        have = None if r["id"] in stale else latest.get(r["id"])
         start = (have + timedelta(days=1)) if have else date.fromisoformat(DEFAULT_START)
         if start <= end:
             todo.append((r, start.isoformat()))
+    if stale:
+        print(f"  Re-fetching {len(stale)} resort(s) missing newer variables: "
+              f"{', '.join(sorted(stale))}")
 
     if not todo:
         print("\n  Climate archive already current.\n")

@@ -217,6 +217,12 @@ CREATE TABLE IF NOT EXISTS climate_daily (
 );
 CREATE INDEX IF NOT EXISTS idx_climate_daily_date ON climate_daily (date);
 
+-- Direction matters as much as strength: a lift shuts when the wind is across
+-- it, so gust speed alone cannot explain which lifts go. Cloud cover stands in
+-- for the visibility closures that wind cannot explain.
+ALTER TABLE climate_daily ADD COLUMN IF NOT EXISTS wind_dir_dominant_deg SMALLINT;
+ALTER TABLE climate_daily ADD COLUMN IF NOT EXISTS cloud_cover_pct SMALLINT;
+
 -- Monthly teleconnection indices. NAO drives Alpine winters far more than
 -- ENSO does, so both are recorded and neither is treated as a predictor.
 CREATE TABLE IF NOT EXISTS climate_indices (
