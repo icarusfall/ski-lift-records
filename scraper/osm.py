@@ -142,11 +142,21 @@ def suggest_matches(resort_id: str | None = None, threshold: float = 0.72):
     import re
     import unicodedata
 
+    # French resorts label lifts by type — "TC DAILLE", "TK 3000", "TAPIS CARPE
+    # DIEM" — while OSM carries the bare name. Stripping a leading type token
+    # is what lets those match at all.
+    TYPE_PREFIX = re.compile(
+        r"^(tk|tc|ts|tsd|tsf|tph|tmx|tb|tr|dmc|tapis|telesiege|teleski|"
+        r"telecabine|telepherique|funitel|chairlift|gondola)\s+")
+
     def norm(s: str) -> str:
-        """Accents and punctuation differ between OSM and resort sites for what
-        is plainly the same lift, so compare on a folded form."""
+        """Accents, punctuation and type prefixes differ between OSM and resort
+        sites for what is plainly the same lift, so compare on a folded form."""
         s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
-        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", s.lower())).strip()
+        s = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", s.lower())).strip()
+        # Only strip when something is left; "FUNIVAL" is a lift's actual name.
+        stripped = TYPE_PREFIX.sub("", s)
+        return stripped if stripped else s
 
     with cursor() as cur:
         cur.execute("""
