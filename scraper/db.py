@@ -227,7 +227,7 @@ ALTER TABLE climate_daily ADD COLUMN IF NOT EXISTS cloud_cover_pct SMALLINT;
 -- lift_id links a mapped way to a lift we actually observe; it stays NULL
 -- until a match is confident, since similar names are often different lifts.
 CREATE TABLE IF NOT EXISTS lift_geometry (
-    osm_id      BIGINT PRIMARY KEY,
+    osm_id      BIGINT NOT NULL,
     resort_id   VARCHAR(50) REFERENCES resorts(id),
     name        VARCHAR(200),
     aerialway   VARCHAR(40),
@@ -238,9 +238,28 @@ CREATE TABLE IF NOT EXISTS lift_geometry (
     geometry    JSONB,
     lift_id     INTEGER REFERENCES lifts(id),
     match_score NUMERIC(4,3),
-    fetched_at  TIMESTAMP DEFAULT NOW()
+    fetched_at  TIMESTAMP DEFAULT NOW(),
+    -- Keyed by resort AND way: neighbouring resorts' search boxes overlap, and
+    -- a lift on a shared border genuinely belongs to both. Keying on the way
+    -- alone let each resort's fetch steal the previous resort's lifts.
+    PRIMARY KEY (resort_id, osm_id)
 );
 CREATE INDEX IF NOT EXISTS idx_lift_geometry_resort ON lift_geometry (resort_id);
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'lift_geometry_pkey'
+          AND conrelid = 'lift_geometry'::regclass
+          AND array_length(conkey, 1) = 1
+    ) THEN
+        DELETE FROM lift_geometry;
+        ALTER TABLE lift_geometry DROP CONSTRAINT lift_geometry_pkey;
+        ALTER TABLE lift_geometry ALTER COLUMN osm_id SET NOT NULL;
+        ALTER TABLE lift_geometry ADD PRIMARY KEY (resort_id, osm_id);
+    END IF;
+END $$;
 
 -- Monthly teleconnection indices. NAO drives Alpine winters far more than
 -- ENSO does, so both are recorded and neither is treated as a predictor.

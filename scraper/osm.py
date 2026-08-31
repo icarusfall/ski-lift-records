@@ -96,8 +96,7 @@ def _store(rows: list[dict]) -> int:
                 (osm_id, resort_id, name, aerialway, bearing_deg, length_m,
                  bottom_lat, bottom_lon, top_lat, top_lon, geometry)
             VALUES %s
-            ON CONFLICT (osm_id) DO UPDATE SET
-                resort_id  = EXCLUDED.resort_id,
+            ON CONFLICT (resort_id, osm_id) DO UPDATE SET
                 name       = EXCLUDED.name,
                 aerialway  = EXCLUDED.aerialway,
                 bearing_deg = EXCLUDED.bearing_deg,
@@ -183,7 +182,8 @@ def suggest_matches(resort_id: str | None = None, threshold: float = 0.72):
         with cursor() as cur:
             for g, l, score in auto:
                 cur.execute("UPDATE lift_geometry SET lift_id = %s, match_score = %s "
-                            "WHERE osm_id = %s", (l["id"], round(score, 3), g["osm_id"]))
+                            "WHERE osm_id = %s AND resort_id = %s",
+                            (l["id"], round(score, 3), g["osm_id"], g["resort_id"]))
     print(f"\n  matched automatically (>=92% similar): {len(auto)}")
     for g, l, s in auto[:10]:
         print(f"     {g['osm_name'][:30]:<32} -> {l['name'][:30]}  ({s:.0%})")
