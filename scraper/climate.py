@@ -51,8 +51,10 @@ NAO_URL = ("https://www.cpc.ncep.noaa.gov/products/precip/CWlink/pna/"
            "norm.nao.monthly.b5001.current.ascii")
 ONI_URL = "https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt"
 
-REQUEST_PAUSE_S = 2.0
-MAX_ATTEMPTS = 4
+# Deliberately unhurried: this is a free service being asked for 35 years of
+# data per resort, and the whole job runs exactly once.
+REQUEST_PAUSE_S = 6.0
+MAX_ATTEMPTS = 6
 
 
 def _fetch(resort: dict, start: str, end: str) -> dict:
@@ -68,7 +70,7 @@ def _fetch(resort: dict, start: str, end: str) -> dict:
     if resort.get("top_altitude_m"):
         params["elevation"] = resort["top_altitude_m"]
 
-    delay = 5.0
+    delay = 15.0
     for attempt in range(1, MAX_ATTEMPTS + 1):
         resp = requests.get(ARCHIVE_URL, params=params, timeout=180)
         if resp.status_code == 200:
