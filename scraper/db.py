@@ -223,6 +223,25 @@ CREATE INDEX IF NOT EXISTS idx_climate_daily_date ON climate_daily (date);
 ALTER TABLE climate_daily ADD COLUMN IF NOT EXISTS wind_dir_dominant_deg SMALLINT;
 ALTER TABLE climate_daily ADD COLUMN IF NOT EXISTS cloud_cover_pct SMALLINT;
 
+-- Lift geometry from OpenStreetMap: real positions, types and bearings.
+-- lift_id links a mapped way to a lift we actually observe; it stays NULL
+-- until a match is confident, since similar names are often different lifts.
+CREATE TABLE IF NOT EXISTS lift_geometry (
+    osm_id      BIGINT PRIMARY KEY,
+    resort_id   VARCHAR(50) REFERENCES resorts(id),
+    name        VARCHAR(200),
+    aerialway   VARCHAR(40),
+    bearing_deg SMALLINT,
+    length_m    INTEGER,
+    bottom_lat  NUMERIC(9,6), bottom_lon NUMERIC(9,6),
+    top_lat     NUMERIC(9,6), top_lon    NUMERIC(9,6),
+    geometry    JSONB,
+    lift_id     INTEGER REFERENCES lifts(id),
+    match_score NUMERIC(4,3),
+    fetched_at  TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lift_geometry_resort ON lift_geometry (resort_id);
+
 -- Monthly teleconnection indices. NAO drives Alpine winters far more than
 -- ENSO does, so both are recorded and neither is treated as a predictor.
 CREATE TABLE IF NOT EXISTS climate_indices (
