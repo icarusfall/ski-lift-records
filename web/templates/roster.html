@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lift roster changes</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f0f4f8; color: #1a202c; }
+  header { background: #2d3748; color: white; padding: 1rem 2rem;
+           display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.3rem; }
+  header a { color: #90cdf4; font-size: 0.85rem; text-decoration: none; }
+  .container { max-width: 1000px; margin: 1.5rem auto; padding: 0 1rem; }
+  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
+          padding: 1rem 1.4rem; margin-bottom: 1rem; }
+  .card h2 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+  .muted { color: #718096; font-size: 0.78rem; }
+  .flash { background: #ebf8ff; border-left: 4px solid #2b6cb0; padding: 0.6rem 1rem;
+           margin-bottom: 1rem; font-size: 0.85rem; border-radius: 0 4px 4px 0; }
+  .intro { background: #fffaf0; border-left: 4px solid #ed8936; padding: 0.7rem 1rem;
+           margin-bottom: 1.2rem; font-size: 0.83rem; border-radius: 0 4px 4px 0;
+           color: #7b341e; }
+  ul { list-style: none; margin-top: 0.6rem; }
+  li { padding: 0.28rem 0; font-size: 0.84rem; border-bottom: 1px solid #edf2f7;
+       display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  li:last-child { border-bottom: none; }
+  .tag { font-size: 0.66rem; border-radius: 3px; padding: 1px 6px; font-weight: 700;
+         letter-spacing: .02em; }
+  .t-add { background: #c6f6d5; color: #22543d; }
+  .t-gone { background: #fed7d7; color: #742a2a; }
+  .t-ren { background: #feebc8; color: #7b341e; }
+  code { background: #edf2f7; border-radius: 3px; padding: 0 4px; font-size: 0.8rem; }
+  button { background: #2b6cb0; color: white; border: none; border-radius: 5px;
+           padding: 0.28rem 0.7rem; font-size: 0.76rem; cursor: pointer; }
+  button:hover { background: #2c5282; }
+  form { display: inline; }
+  .controls { margin-bottom: 1rem; font-size: 0.83rem; }
+  .controls a { color: #2b6cb0; margin-right: 0.8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔀 Lift roster changes</h1>
+  <a href="/admin">← Control panel</a>
+</header>
+<div class="container">
+
+  {% with messages = get_flashed_messages() %}
+    {% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}
+  {% endwith %}
+
+  <div class="intro">
+    Comparing each resort's most recent lift list against the last one at least
+    {{ gap }} days earlier. Resorts routinely drop lifts from their pages at the end
+    of a season, so <strong>“gone” usually means out of season, not retired</strong>.
+    Renames are <strong>suggestions only</strong> — names like “Loze A” and “Loze B” are
+    different lifts, so nothing is merged until you confirm it here.
+  </div>
+
+  <div class="controls">
+    Window:
+    <a href="/admin/roster?gap=7">7 days</a>
+    <a href="/admin/roster?gap=30">30 days</a>
+    <a href="/admin/roster?gap=90">90 days</a>
+    <a href="/admin/roster?gap=180">180 days (across the summer)</a>
+  </div>
+
+  {% for c in changes %}
+    <div class="card">
+      <h2>{{ c.resort_id }}</h2>
+      <div class="muted">
+        {{ c.previous }} → {{ c.latest }} · {{ c.unchanged }} lifts unchanged ·
+        {{ c.added|length }} added · {{ c.gone|length }} gone
+      </div>
+      <ul>
+        {% set renamed_old = c.renames | map(attribute=0) | list %}
+        {% set renamed_new = c.renames | map(attribute=1) | list %}
+        {% for old, new, score in c.renames %}
+          <li>
+            <span class="tag t-ren">RENAME?</span>
+            <code>{{ old }}</code> → <code>{{ new }}</code>
+            <span class="muted">{{ "%.0f"|format(score * 100) }}% similar</span>
+            <form method="post" action="/admin/merge-lift">
+              <input type="hidden" name="old_id" value="{{ c.ids[old] }}">
+              <input type="hidden" name="new_id" value="{{ c.ids[new] }}">
+              <input type="hidden" name="gap" value="{{ gap }}">
+              <button type="submit">Same lift — merge history</button>
+            </form>
+          </li>
+        {% endfor %}
+        {% for n in c.added %}
+          {% if n not in renamed_new %}
+            <li><span class="tag t-add">ADDED</span> <code>{{ n }}</code></li>
+          {% endif %}
+        {% endfor %}
+        {% for n in c.gone %}
+          {% if n not in renamed_old %}
+            <li><span class="tag t-gone">GONE</span> <code>{{ n }}</code></li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </div>
+  {% else %}
+    <div class="card"><p class="muted">No roster changes in this window.</p></div>
+  {% endfor %}
+
+</div>
+</body>
+</html>

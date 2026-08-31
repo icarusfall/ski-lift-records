@@ -185,6 +185,12 @@ CREATE INDEX IF NOT EXISTS idx_holiday_periods_dates ON holiday_periods (start_d
 -- normalised status so "closed" can later be split into wind hold, seasonal
 -- closure, maintenance and so on.
 ALTER TABLE lift_readings ADD COLUMN IF NOT EXISTS raw_status VARCHAR(100);
+
+-- Renamed lifts: alias_of points at the canonical lift so history survives a
+-- rename. Never set automatically — renames are only ever suggested, because
+-- names like 'Loze A'/'Loze B' are different lifts, not a rename.
+ALTER TABLE lifts ADD COLUMN IF NOT EXISTS alias_of INTEGER REFERENCES lifts(id);
+CREATE INDEX IF NOT EXISTS idx_lifts_alias_of ON lifts (alias_of);
 """
 
 

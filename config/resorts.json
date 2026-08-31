@@ -20,10 +20,10 @@
     "top_altitude_m": 3883,
     "latitude": 46.0207,
     "longitude": 7.7491,
-    "scraper": "bergfex",
+    "scraper": "zermatt",
     "primary_url": "https://www.matterhornparadise.ch/en/information/lifts-and-pistes",
     "bergfex_slug": "zermatt",
-    "notes": "Swiss side of Matterhorn; linked to Cervinia. matterhornparadise.ch is CSR (TYPO3), bergfex used as fallback"
+    "notes": "Swiss side of Matterhorn, linked to Cervinia. Primary: matterhornparadise.ch facility-tab JSON fragments (Swiss sectors only; the site also exposes Breuil-Cervinia and Valtournenche sectors as a possible independent cross-check on the Italian side)"
   },
   {
     "id": "val-thorens",
@@ -183,8 +183,9 @@
     "latitude": 46.0964,
     "longitude": 7.2283,
     "scraper": "bergfex",
-    "primary_url": "https://www.verbier.ch/en/skiing/snow-and-conditions/",
-    "bergfex_slug": "verbier"
+    "primary_url": "https://www.verbier.ch/en/",
+    "bergfex_slug": "verbier",
+    "notes": "Swiss side of the 4 Vallees. Old lift-status URL now 404s. infosnow.ch API is NOT public - it requires a public/private key pair issued by APG|SGA, so the long-standing 'find Verbier's xid' plan is dead unless keys are obtained."
   },
   {
     "id": "saas-fee",
@@ -350,7 +351,8 @@
     "scraper": "bergfex",
     "primary_url": "https://www.lathuile.it/en/",
     "bergfex_slug": "thuile-rosiere-aostatal",
-    "notes": "Linked to La Rosiere (FR) as Espace San Bernardo; bergfex covers the combined area"
+    "notes": "Linked to La Rosiere (FR) as Espace San Bernardo; bergfex covers the combined area | primary-source lead: runs the skiperformance platform - likely the easiest primary scraper to add next",
+    "primary_lead": "https://www.lathuile.it/en/lifts-and-openings"
   },
   {
     "id": "courmayeur",
@@ -363,7 +365,8 @@
     "scraper": "bergfex",
     "primary_url": "https://www.courmayeurmontblanc.it/en/",
     "bergfex_slug": "courmayeur",
-    "notes": "Mont Blanc massif, south side; completes the Aosta cluster with Cervinia and Monterosa"
+    "notes": "Mont Blanc massif, south side; completes the Aosta cluster with Cervinia and Monterosa | primary-source lead: dedicated slopes-and-lifts page; platform not yet identified",
+    "primary_lead": "https://www.courmayeurmontblanc.it/en/slopes-and-lifts/"
   },
   {
     "id": "livigno",
@@ -376,7 +379,8 @@
     "scraper": "bergfex",
     "primary_url": "https://www.livigno.eu/en",
     "bergfex_slug": "livigno",
-    "notes": "High, snow-sure, inner-alpine and drier; eastern Italian control"
+    "notes": "High, snow-sure, inner-alpine and drier; eastern Italian control | primary-source lead: dedicated lifts page; platform not yet identified",
+    "primary_lead": "https://www.livigno.eu/en/lifts"
   },
   {
     "id": "passo-tonale",
@@ -389,7 +393,8 @@
     "scraper": "bergfex",
     "primary_url": "https://www.pontedilegnotonale.com/en",
     "bergfex_slug": "passo-tonale-val-di-sole",
-    "notes": "Presena glacier; high-altitude control with a long season"
+    "notes": "Presena glacier; high-altitude control with a long season | primary-source lead: lift info behind a tab panel; check for an XHR endpoint in season",
+    "primary_lead": "https://www.pontedilegnotonale.com/en/ski-pass-and-ski-lifts/"
   },
   {
     "id": "st-moritz",
@@ -428,7 +433,8 @@
     "scraper": "bergfex",
     "primary_url": "https://www.montgenevre.com/en/",
     "bergfex_slug": "montgenevre",
-    "notes": "Voie Lactee; southernmost French pole, Mediterranean-influenced - the El Nino/NAO contrast case"
+    "notes": "Voie Lactee; southernmost French pole, Mediterranean-influenced - the El Nino/NAO contrast case | primary-source lead: remontees page found; needs a proper live-status URL in season",
+    "primary_lead": "https://montgenevre.com/prestataire/remontees-mecaniques-875960/"
   },
   {
     "id": "grandvalira",

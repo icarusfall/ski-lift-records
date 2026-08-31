@@ -233,7 +233,7 @@ def api_lift_stats():
     """Per-lift open-day counts (whole history, primary-scraped resorts only)."""
     with cursor() as cur:
         cur.execute("""
-            SELECT l.resort_id, r.name AS resort_name, l.name, l.is_link,
+            SELECT c.resort_id, r.name AS resort_name, c.name, c.is_link,
                    COUNT(*) FILTER (WHERE lr.status = 'open')     AS days_open,
                    COUNT(*) FILTER (WHERE lr.status = 'closed')   AS days_closed,
                    COUNT(*) FILTER (WHERE lr.status = 'hold')     AS days_hold,
@@ -247,11 +247,13 @@ def api_lift_stats():
                        FILTER (WHERE lr.status <> 'open'), NULL) AS closed_reasons
             FROM lift_readings lr
             JOIN lifts l ON l.id = lr.lift_id
+            -- roll a renamed lift's readings up into its canonical lift
+            JOIN lifts c ON c.id = COALESCE(l.alias_of, l.id)
             JOIN snapshots s ON s.id = lr.snapshot_id
-            JOIN resorts r ON r.id = l.resort_id
-            WHERE NOT l.name LIKE 'lift\\_%%'
-            GROUP BY l.resort_id, r.name, l.name, l.is_link
-            ORDER BY l.resort_id, l.name
+            JOIN resorts r ON r.id = c.resort_id
+            WHERE NOT c.name LIKE 'lift\\_%%'
+            GROUP BY c.resort_id, r.name, c.name, c.is_link
+            ORDER BY c.resort_id, c.name
         """)
         rows = cur.fetchall()
     resp = jsonify([{k: _plain(v) for k, v in row.items()} for row in rows])
@@ -380,6 +382,29 @@ def admin():
         health=get_resort_health(),
         today=datetime.now(timezone.utc).date(),
     )
+
+
+@app.route("/admin/roster")
+def admin_roster():
+    if not is_admin():
+        return redirect(url_for("admin"))
+    from scraper.roster import all_changes
+    gap = request.args.get("gap", 30, type=int)
+    return render_template("roster.html", changes=all_changes(gap), gap=gap)
+
+
+@app.route("/admin/merge-lift", methods=["POST"])
+def admin_merge_lift():
+    if not is_admin():
+        return redirect(url_for("admin"))
+    from scraper.roster import merge_lift
+    try:
+        old_name, new_name = merge_lift(int(request.form["old_id"]),
+                                        int(request.form["new_id"]))
+        flash(f"Merged: {old_name!r} now rolls up into {new_name!r}.")
+    except (ValueError, KeyError) as e:
+        flash(f"Could not merge: {e}")
+    return redirect(url_for("admin_roster", gap=request.form.get("gap", 30)))
 
 
 @app.route("/admin/login", methods=["POST"])
