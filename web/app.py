@@ -10,6 +10,7 @@ import io
 import json
 import os
 import sys
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -224,6 +225,56 @@ def api_holidays():
         """)
         rows = cur.fetchall()
     resp = jsonify([{k: _plain(v) for k, v in row.items()} for row in rows])
+    resp.headers["Cache-Control"] = "public, max-age=1800"
+    return resp
+
+
+@app.route("/api/outlook.json")
+def api_outlook():
+    """Expected conditions for a calendar window, per resort.
+
+    Combines each resort's observed response to wind with 35 years of ERA5
+    frequency for that window.
+    """
+    from scraper.model import all_window_stats, forecast_from, pooled_response
+
+    start_md = request.args.get("from", "02-14")
+    end_md = request.args.get("to", "02-22")
+    trip_days = request.args.get("days", 7, type=int)
+    if not (re.fullmatch(r"\d{2}-\d{2}", start_md) and re.fullmatch(r"\d{2}-\d{2}", end_md)):
+        return jsonify({"error": "from/to must look like MM-DD"}), 400
+    trip_days = max(1, min(trip_days, 21))
+
+    with cursor() as cur:
+        cur.execute("SELECT id, name, country, area, top_altitude_m FROM resorts ORDER BY name")
+        resorts = cur.fetchall()
+
+    pooled = pooled_response()
+    stats = all_window_stats(start_md, end_md)
+    out = []
+    for r in resorts:
+        s = stats.get(r["id"])
+        if not s:
+            continue
+        f = forecast_from(r["id"], s["freq"], pooled, trip_days=trip_days)
+        if not f:
+            continue
+        runs = s["runs"]
+        out.append({
+            "resort_id": r["id"], "name": r["name"], "country": r["country"],
+            "area": r["area"], "top_altitude_m": r["top_altitude_m"],
+            "expected_pct_open": round(f["expected_pct_open"], 1),
+            "p_lost_day": round(f["p_lost_day"], 4),
+            "p_any_lost": round(f["p_any_lost"], 4),
+            "p_storm_run": round(runs.get("p_run", 0), 4),
+            "worst_run": runs.get("worst_run"),
+            "climate_years": runs.get("years"),
+            "obs_days": f["obs_days"],
+            "thin": f["thin"],
+        })
+    out.sort(key=lambda x: -x["expected_pct_open"])
+    resp = jsonify({"from": start_md, "to": end_md, "trip_days": trip_days,
+                    "resorts": out})
     resp.headers["Cache-Control"] = "public, max-age=1800"
     return resp
 

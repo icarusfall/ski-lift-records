@@ -9,8 +9,13 @@ answer planning questions after one season instead of after ten.
     python -m scraper.climate --backfill              # all resorts, 1991 onward
     python -m scraper.climate --backfill cervinia
     python -m scraper.climate --backfill --from 2010-01-01
+    python -m scraper.climate --update                # top up recent days only
     python -m scraper.climate --indices               # NAO + ONI monthly series
     python -m scraper.climate --status                # coverage report
+
+The full backfill is 36 requests total — one per resort, each covering 35
+years — and never needs repeating. Use --update thereafter, which asks only
+for days missing since each resort's latest stored date.
 
 Not available historically: freezing level and pressure-level winds come back
 empty from the archive endpoint, so those exist only from season 2 onward.
@@ -156,6 +161,42 @@ def backfill(resort_filter: str | None = None, start: str = DEFAULT_START,
     print(f"\n  {total:,} resort-days stored.\n")
 
 
+def update_recent():
+    """Top up each resort from its latest stored day, and no further back.
+
+    ERA5 lags real time by about five days, so this is worth running monthly
+    at most — it exists so the archive stays current without ever re-requesting
+    the 35 years already held.
+    """
+    end = (datetime.now(timezone.utc).date() - timedelta(days=6))
+    with cursor() as cur:
+        cur.execute("SELECT resort_id, MAX(date) AS last FROM climate_daily GROUP BY resort_id")
+        latest = {r["resort_id"]: r["last"] for r in cur.fetchall()}
+
+    resorts = [r for r in load_resorts() if r.get("latitude")]
+    todo = []
+    for r in resorts:
+        have = latest.get(r["id"])
+        start = (have + timedelta(days=1)) if have else date.fromisoformat(DEFAULT_START)
+        if start <= end:
+            todo.append((r, start.isoformat()))
+
+    if not todo:
+        print("\n  Climate archive already current.\n")
+        return
+    print(f"\n  Topping up {len(todo)} resort(s) to {end}\n")
+    total = 0
+    for resort, start in todo:
+        try:
+            n = _store(_rows(resort["id"], _fetch(resort, start, end.isoformat())))
+            total += n
+            print(f"  {resort['id']:<16} +{n} days")
+        except Exception as e:
+            print(f"  {resort['id']:<16} FAILED: {e}")
+        time.sleep(REQUEST_PAUSE_S)
+    print(f"\n  {total:,} days added.\n")
+
+
 def load_indices():
     """Monthly NAO and ONI series from NOAA CPC."""
     stored = 0
@@ -233,6 +274,9 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = sys.argv[1:]
 
+    if "--update" in args:
+        update_recent()
+        return 0
     if "--indices" in args:
         print("\nLoading NAO and ONI monthly indices...")
         load_indices()

@@ -109,6 +109,9 @@
                     border-bottom: 1px solid var(--grid);
                     font-variant-numeric: tabular-nums; }
   table.league tr:last-child td { border-bottom: none; }
+  .bar-mini { display: inline-block; width: 70px; height: 7px; background: var(--wash);
+              border-radius: 4px; overflow: hidden; vertical-align: 0px; }
+  .bar-mini i { display: block; height: 7px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -120,7 +123,7 @@
 
   <div class="card">
     <div class="tabs" id="tabs"></div>
-    <div class="controls">
+    <div class="controls" id="rangeCtl">
       <div class="group" id="rangePresets"><label>Range:</label></div>
       <div class="group">
         <input type="date" id="dFrom"> <span style="color:var(--muted)">→</span>
@@ -180,7 +183,7 @@ const METRICS = {
 
 const TABS = [
   ["heatmap", "Season heatmap"], ["compare", "Compare"], ["wind", "Wind vs open"],
-  ["lifts", "Lift reliability"], ["league", "League table"],
+  ["lifts", "Lift reliability"], ["league", "League table"], ["plan", "Plan a trip"],
 ];
 
 /* ---------- utilities ---------- */
@@ -777,15 +780,114 @@ function renderLeague(host) {
   host.appendChild(table);
 }
 
+/* ---------- plan a trip ---------- */
+let planFrom = "02-14", planTo = "02-22";
+const PLAN_DAYS = 7;
+const PLAN_CACHE = new Map();
+const PLAN_WEEKS = [
+  ["Christmas",     "12-20", "12-31"],
+  ["Mid-January",   "01-10", "01-18"],
+  ["UK half-term",  "02-14", "02-22"],
+  ["Late February", "02-23", "03-03"],
+  ["Mid-March",     "03-10", "03-18"],
+  ["Easter",        "04-01", "04-10"],
+];
+
+function renderPlan(host) {
+  host.appendChild(el("h2", { text: "Plan a trip" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "How much of each resort should be running in a given week, and how likely you are to "
+        + "lose days to wind. How often the weather happens comes from 35 years of reanalysis; "
+        + "how lifts respond to it comes from observed seasons." }));
+
+  const ctl = el("div", { class: "controls", style: "margin-bottom:0.9rem;" });
+  const grp = el("div", { class: "group" }, el("label", { text: "Week:" }));
+  for (const [label, f, t] of PLAN_WEEKS) {
+    grp.appendChild(el("button", {
+      class: "preset" + (f === planFrom && t === planTo ? " active" : ""),
+      text: label,
+      onclick: () => { planFrom = f; planTo = t; render(); },
+    }));
+  }
+  ctl.appendChild(grp);
+  host.appendChild(ctl);
+
+  const key = planFrom + "_" + planTo;
+  if (!PLAN_CACHE.has(key)) {
+    host.appendChild(el("p", { class: "sub", text: "Calculating…" }));
+    fetch(`/api/outlook.json?from=${planFrom}&to=${planTo}&days=${PLAN_DAYS}`)
+      .then(r => r.json())
+      .then(d => { PLAN_CACHE.set(key, d); if (tab === "plan") render(); })
+      .catch(e => { PLAN_CACHE.set(key, { error: e.message }); if (tab === "plan") render(); });
+    return;
+  }
+  const data = PLAN_CACHE.get(key);
+  if (data.error) {
+    host.appendChild(el("p", { class: "sub", text: "Could not compute an outlook: " + data.error }));
+    return;
+  }
+  if (!data.resorts || !data.resorts.length) {
+    host.appendChild(el("p", { class: "sub",
+      text: "No outlook yet — the climate archive is still being backfilled." }));
+    return;
+  }
+
+  const risk = p => p >= 0.25 ? "#d03b3b" : p >= 0.12 ? "#fab219" : "#0ca30c";
+  const lg = el("div", { class: "legend" });
+  for (const [c, t] of [["#0ca30c", "lower risk"], ["#fab219", "moderate"], ["#d03b3b", "higher risk"]]) {
+    const item = el("span", {}, el("span", { class: "dot" }), document.createTextNode(t));
+    item.querySelector(".dot").style.background = c;
+    lg.appendChild(item);
+  }
+  host.appendChild(lg);
+
+  const thead = el("tr", {});
+  for (const label of ["Resort", "Expected % open", "Lost-day rate", "≥1 lost day in 7", "3+ bad days in a row"])
+    thead.appendChild(el("th", { text: label }));
+  const table = el("table", { class: "league" }, el("thead", {}, thead));
+  const tbody = el("tbody", {});
+  for (const r of data.resorts) {
+    const bar = el("span", { class: "bar-mini" });
+    const fill = el("i");
+    fill.style.width = Math.max(0, Math.min(100, r.expected_pct_open)) + "%";
+    fill.style.background = SERIES[0];
+    bar.appendChild(fill);
+
+    const nameCell = el("td", {}, document.createTextNode(r.name));
+    if (r.thin) nameCell.appendChild(el("span", { class: "badge", text: "THIN" }));
+
+    const anyLost = el("td", { text: Math.round(100 * r.p_any_lost) + "%" });
+    anyLost.style.color = risk(r.p_any_lost);
+    const run = el("td", { text: r.climate_years ? Math.round(100 * r.p_storm_run) + "%" : "—" });
+    run.style.color = risk(r.p_storm_run);
+    run.style.fontWeight = "600";
+
+    tbody.appendChild(el("tr", {}, nameCell,
+      el("td", {}, bar, document.createTextNode(" " + r.expected_pct_open.toFixed(1) + "%")),
+      el("td", { text: Math.round(100 * r.p_lost_day) + "%" }),
+      anyLost, run));
+  }
+  table.appendChild(tbody);
+  host.appendChild(table);
+  host.appendChild(el("p", { class: "hint",
+    text: "A “lost day” means under half the lifts running — the failure mode that actually spoils "
+        + "a trip, rather than one link lift being shut. The last column is the share of the past "
+        + (data.resorts[0].climate_years || 35) + " years whose window contained three consecutive "
+        + "days with gusts over 60 km/h. THIN marks resorts whose observed response still rests on "
+        + "few days." }));
+}
+
 /* ---------- render dispatch ---------- */
 function render() {
   hideTip();
   const host = $("#view");
   host.innerHTML = "";
   $("#resortCtl").style.display = (tab === "compare" || tab === "wind") ? "" : "none";
+  $("#rangeCtl").style.display = (tab === "plan") ? "none" : "";
+  $("#selHint").style.display = (tab === "plan") ? "none" : "";
   try {
     ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
-       lifts: renderLifts, league: renderLeague })[tab](host);
+       lifts: renderLifts, league: renderLeague, plan: renderPlan })[tab](host);
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
   }

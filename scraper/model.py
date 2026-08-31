@@ -43,8 +43,20 @@ def _bin_for(gust: float | None) -> str | None:
     return BINS[-1][1]
 
 
+_OBS_CACHE: list | None = None
+
+
+def clear_cache():
+    """Drop the memoised observation set (after new data is collected)."""
+    global _OBS_CACHE
+    _OBS_CACHE = None
+
+
 def _observations():
     """Clean resort-days with both a lift reading and a wind reading.
+
+    Memoised: ranking every resort re-reads this set once per resort, which
+    turns a single query into dozens of full scans if it is not cached.
 
     Restricted to the core season. Outside it, resorts wind down for reasons
     that have nothing to do with weather, and since season 1 only began on
@@ -52,6 +64,9 @@ def _observations():
     which showed up as a nonsensically *better* response in severe wind than
     in moderate wind.
     """
+    global _OBS_CACHE
+    if _OBS_CACHE is not None:
+        return _OBS_CACHE
     with cursor() as cur:
         cur.execute("""
             SELECT resort_id, snapshot_date, pct_lifts_open, wind_gust_max_kmh
@@ -61,7 +76,8 @@ def _observations():
               AND (TO_CHAR(snapshot_date, 'MM-DD') >= %s
                    OR TO_CHAR(snapshot_date, 'MM-DD') <= %s)
         """, (CORE_SEASON[0], CORE_SEASON[1]))
-        return cur.fetchall()
+        _OBS_CACHE = cur.fetchall()
+    return _OBS_CACHE
 
 
 def _aggregate(rows):
@@ -205,6 +221,84 @@ def storm_runs(resort_id: str, start_md: str, end_md: str,
         "p_run": years_with_run / n,
         "mean_longest_run": sum(longest) / n,
         "worst_run": max(longest),
+    }
+
+
+def all_window_stats(start_md: str, end_md: str, threshold: float = 60.0,
+                     min_run: int = 3) -> dict[str, dict]:
+    """Wind-band frequency and storm-run stats for every resort in one query.
+
+    Ranking the whole field otherwise costs two indexless scans per resort,
+    which is far too slow to serve from a web request.
+    """
+    with cursor() as cur:
+        cur.execute("""
+            SELECT resort_id, EXTRACT(YEAR FROM date)::int AS yr, date,
+                   wind_gust_max_kmh AS g
+            FROM climate_daily
+            WHERE TO_CHAR(date, 'MM-DD') BETWEEN %s AND %s
+              AND wind_gust_max_kmh IS NOT NULL
+            ORDER BY resort_id, date
+        """, (start_md, end_md))
+        rows = cur.fetchall()
+
+    per_resort = defaultdict(lambda: {"counts": defaultdict(int), "n": 0,
+                                      "years": defaultdict(list)})
+    for r in rows:
+        acc = per_resort[r["resort_id"]]
+        g = float(r["g"])
+        acc["counts"][_bin_for(g)] += 1
+        acc["n"] += 1
+        acc["years"][r["yr"]].append(g >= threshold)
+
+    out = {}
+    for rid, acc in per_resort.items():
+        longest, with_run = [], 0
+        for windy_days in acc["years"].values():
+            run = best = 0
+            for w in windy_days:
+                run = run + 1 if w else 0
+                best = max(best, run)
+            longest.append(best)
+            if best >= min_run:
+                with_run += 1
+        n_years = len(acc["years"]) or 1
+        out[rid] = {
+            "freq": {"n_days": acc["n"],
+                     "p": {b: c / acc["n"] for b, c in acc["counts"].items()}},
+            "runs": {"years": len(acc["years"]),
+                     "p_run": with_run / n_years,
+                     "mean_longest_run": sum(longest) / n_years,
+                     "worst_run": max(longest) if longest else 0},
+        }
+    return out
+
+
+def forecast_from(resort_id: str, freq: dict, pooled: dict,
+                  trip_days: int = 7) -> dict | None:
+    """forecast() for a frequency distribution already in hand."""
+    resp = shrunk_response(resort_id, pooled)
+    if not resp or not freq or not freq.get("p"):
+        return None
+    exp_open = p_lost = covered = 0.0
+    for b, p in freq["p"].items():
+        r = resp.get(b)
+        if not r:
+            continue
+        exp_open += p * r["pct_open"]
+        p_lost += p * r["p_lost"]
+        covered += p
+    if covered < 0.5:
+        return None
+    exp_open, p_lost = exp_open / covered, p_lost / covered
+    return {
+        "resort_id": resort_id,
+        "expected_pct_open": exp_open,
+        "p_lost_day": p_lost,
+        "p_any_lost": 1 - (1 - p_lost) ** trip_days,
+        "climate_days": freq["n_days"],
+        "obs_days": sum(r["n"] for r in resp.values()),
+        "thin": any(r.get("shrunk") for r in resp.values()),
     }
 
 
