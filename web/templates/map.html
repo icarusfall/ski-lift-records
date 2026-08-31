@@ -132,17 +132,24 @@
     }
     el.textContent = msg;
   }
+  // Mapbox fires `error` for transient things too — a single tile timing out
+  // on a slow connection is routine and must not be reported as a dead map.
+  // Only a style that never loads at all is worth interrupting the user for.
   map.on("error", function (e) {
     var m = (e && e.error && e.error.message) || "unknown error";
-    fail("The map could not load: " + m);
+    console.warn("mapbox:", m);
   });
   var loadWatch = setTimeout(function () {
     if (!map.isStyleLoaded()) {
       fail("The map style did not finish loading. Tiles may be blocked by the "
          + "network, or this browser may not support the renderer.");
     }
-  }, 15000);
-  map.on("load", function () { clearTimeout(loadWatch); });
+  }, 25000);
+  map.on("load", function () {
+    clearTimeout(loadWatch);
+    var el = document.getElementById("map-error");
+    if (el) el.remove();
+  });
 
   function colourExpression() {
     // Interpolate the ramp over 0-100%, with unmatched lifts falling through
