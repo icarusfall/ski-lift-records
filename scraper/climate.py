@@ -57,6 +57,19 @@ REQUEST_PAUSE_S = 6.0
 MAX_ATTEMPTS = 6
 
 
+class QuotaExhausted(RuntimeError):
+    """The API's hourly or daily allowance is spent — resume in a later pass."""
+
+
+def _resume_hint() -> str:
+    now = datetime.now(timezone.utc)
+    nxt = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+    mins = max(1, int((nxt - now).total_seconds() // 60) + 1)
+    return (f"API allowance spent. Nothing was lost — rerun "
+            f"`python -m scraper.climate --update` in about {mins} min "
+            f"(after {nxt.strftime('%H:%M')} UTC) to carry on.")
+
+
 def _fetch(resort: dict, start: str, end: str) -> dict:
     """One archive request covering a resort's whole date range."""
     params = {
@@ -75,13 +88,25 @@ def _fetch(resort: dict, start: str, end: str) -> dict:
         resp = requests.get(ARCHIVE_URL, params=params, timeout=180)
         if resp.status_code == 200:
             return resp.json().get("daily", {})
-        # The free tier throttles; back off rather than losing the resort.
+
+        reason = ""
+        try:
+            reason = (resp.json() or {}).get("reason", "")
+        except Exception:
+            reason = resp.text[:160]
+
+        # An hourly or daily quota does not clear in seconds. Retrying against
+        # it is just hammering a free service, so stop the whole run and say
+        # when to resume — the backfill picks up exactly where it left off.
+        if resp.status_code == 429 and ("Hourly" in reason or "Daily" in reason):
+            raise QuotaExhausted(reason)
+
         if resp.status_code in (429, 500, 502, 503) and attempt < MAX_ATTEMPTS:
-            print(f"         rate-limited ({resp.status_code}); waiting {delay:.0f}s")
+            print(f"         throttled ({resp.status_code}); waiting {delay:.0f}s")
             time.sleep(delay)
             delay *= 2
             continue
-        raise RuntimeError(f"{resp.status_code}: {resp.text[:120]}")
+        raise RuntimeError(f"{resp.status_code}: {reason}")
     raise RuntimeError("exhausted retries")
 
 
@@ -157,6 +182,9 @@ def backfill(resort_filter: str | None = None, start: str = DEFAULT_START,
             n = _store(_rows(resort["id"], daily))
             total += n
             print(f"         {n:,} days stored")
+        except QuotaExhausted:
+            print(f"\n  {_resume_hint()}")
+            break
         except Exception as e:
             print(f"         FAILED: {e}")
         time.sleep(REQUEST_PAUSE_S)
@@ -187,16 +215,21 @@ def update_recent():
         print("\n  Climate archive already current.\n")
         return
     print(f"\n  Topping up {len(todo)} resort(s) to {end}\n")
-    total = 0
+    total = done = 0
     for resort, start in todo:
         try:
             n = _store(_rows(resort["id"], _fetch(resort, start, end.isoformat())))
             total += n
-            print(f"  {resort['id']:<16} +{n} days")
+            done += 1
+            print(f"  {resort['id']:<16} +{n:,} days")
+        except QuotaExhausted:
+            print(f"\n  {_resume_hint()}")
+            break
         except Exception as e:
             print(f"  {resort['id']:<16} FAILED: {e}")
         time.sleep(REQUEST_PAUSE_S)
-    print(f"\n  {total:,} days added.\n")
+    print(f"\n  {total:,} days added across {done} resort(s); "
+          f"{len(todo) - done} still to do.\n")
 
 
 def load_indices():
