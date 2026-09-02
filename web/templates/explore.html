@@ -54,6 +54,11 @@
   .stat-v { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
   .stat-l { font-size: 0.72rem; color: var(--ink-2); }
   .stat-n { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
+  .facets { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+  .facet { border: 1px solid var(--grid); border-radius: 6px; padding: 0.3rem 0.35rem 0.1rem;
+           width: 232px; }
+  .facet-t { font-size: 0.72rem; color: var(--ink-2); font-weight: 600;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sub { color: var(--ink-2); font-size: 0.8rem; margin-bottom: 0.8rem; }
   /* heatmap */
   .hm-scroll { overflow-x: auto; padding-bottom: 0.4rem; }
@@ -192,7 +197,7 @@ const METRICS = {
 const TABS = [
   ["heatmap", "Season heatmap"], ["compare", "Compare"], ["wind", "Wind vs open"],
   ["lifts", "Lift reliability"], ["league", "League table"], ["plan", "Plan a trip"],
-  ["model", "How it works"],
+  ["scatter", "Scatter lab"], ["model", "How it works"],
 ];
 
 /* ---------- utilities ---------- */
@@ -886,6 +891,341 @@ function renderPlan(host) {
         + "few days." }));
 }
 
+/* ---------- scatter lab ---------- */
+/* Axes are the time-series metrics plus a few that only make sense against
+   another variable: altitude is constant per resort, and the within-day drop
+   is a wind-hold detector rather than a quantity anyone tracks over time. */
+const AXES = Object.assign({}, METRICS, {
+  alt:    { label: "Resort top altitude", unit: "m",    get: r => r.alt },
+  wind:   { label: "Max wind speed",      unit: "km/h", get: r => r.wind },
+  tmax:   { label: "Max temp",            unit: "°C",   get: r => r.tmax },
+  snowv:  { label: "Snow depth (valley)", unit: "cm",   get: r => r.snow_val },
+  precip: { label: "Precipitation",       unit: "mm",   get: r => r.precip },
+  total:  { label: "Lifts in the resort", unit: "",     get: r => r.lifts_total },
+  doy:    { label: "Days into the season", unit: "d",   get: r => daysIntoSeason(r.date) },
+  drop:   { label: "Within-day drop",     unit: "pt",
+            get: r => (r.error || r.pct == null || r.pctMin == null) ? null : r.pct - r.pctMin },
+});
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DIMS = {
+  none:    { label: "nothing" },
+  resort:  { label: "resort", cat: r => r.name },
+  country: { label: "country", cat: r => r.country },
+  area:    { label: "area", cat: r => r.area },
+  month:   { label: "month", cat: r => MONTHS[+r.date.slice(5, 7) - 1] },
+  hol:     { label: "school holiday", cat: r => r.hol ? "holiday" : "term time" },
+  band:    { label: "wind band", cat: r => r.gust == null ? null : bandOf(Number(r.gust)) },
+  altn:    { label: "top altitude", num: r => r.alt, unit: "m" },
+  gustn:   { label: "wind gust", num: r => r.gust == null ? null : Number(r.gust), unit: "km/h" },
+  freshn:  { label: "fresh snow", num: r => r.fresh == null ? null : Number(r.fresh), unit: "cm" },
+};
+let lab = { x: "gust", y: "pct", colour: "country", size: "none",
+            facet: "none", trend: "bins", selOnly: false, core: false };
+
+function daysIntoSeason(d) {
+  const y = +d.slice(0, 4), m = +d.slice(5, 7);
+  const start = Date.UTC(m >= 8 ? y : y - 1, 10, 1);   // 1 November
+  return Math.round((Date.parse(d) - start) / 86400000);
+}
+/* Least squares, plus the r² that says whether the line deserves attention. */
+function fitLine(pts) {
+  const n = pts.length;
+  if (n < 3) return null;
+  let sx = 0, sy = 0, sxy = 0, sxx = 0, syy = 0;
+  for (const p of pts) { sx += p.x; sy += p.y; sxy += p.x * p.y; sxx += p.x * p.x; syy += p.y * p.y; }
+  const den = n * sxx - sx * sx;
+  if (!den) return null;
+  const slope = (n * sxy - sx * sy) / den, intercept = (sy - slope * sx) / n;
+  const denR = Math.sqrt(den * (n * syy - sy * sy));
+  const r = denR ? (n * sxy - sx * sy) / denR : 0;
+  return { slope, intercept, r2: r * r, n };
+}
+function binMeans(pts, dom, nbins = 8) {
+  const out = [];
+  for (let i = 0; i < nbins; i++) {
+    const lo = dom[0] + (dom[1] - dom[0]) * i / nbins;
+    const hi = dom[0] + (dom[1] - dom[0]) * (i + 1) / nbins;
+    const inBin = pts.filter(p => p.x >= lo && (i === nbins - 1 ? p.x <= hi : p.x < hi));
+    if (inBin.length < 3) continue;
+    const mean = inBin.reduce((a, p) => a + p.y, 0) / inBin.length;
+    const sd = Math.sqrt(inBin.reduce((a, p) => a + (p.y - mean) ** 2, 0) / inBin.length);
+    out.push({ mid: (lo + hi) / 2, mean, sd, n: inBin.length });
+  }
+  return out;
+}
+/* Round tick values, so an axis reads 0/25/50 rather than 5.8/28/53. */
+function niceTicks(dom, count) {
+  const raw = (dom[1] - dom[0]) / count;
+  if (!(raw > 0)) return dom;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * p).find(v => v >= raw) || 10 * p;
+  const out = [];
+  for (let v = Math.ceil(dom[0] / step) * step; v <= dom[1] + step / 1e6; v += step)
+    out.push(Math.round(v / step) * step);
+  return out;
+}
+/* Several labels already carry their unit ("% lifts open"); don't repeat it. */
+function axisTitle(k) {
+  const a = AXES[k];
+  return a.unit && !a.label.includes(a.unit) ? `${a.label} (${a.unit})` : a.label;
+}
+function domainOf(vals) {
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  if (lo === hi) return [lo - 1, hi + 1];
+  const pad = (hi - lo) * 0.04;
+  return [lo - pad, hi + pad];
+}
+
+function labPoints() {
+  const gx = AXES[lab.x].get, gy = AXES[lab.y].get;
+  const sized = lab.size !== "none" ? DIMS[lab.size] : null;
+  const pts = [];
+  for (const r of ROWS) {
+    if (!inRange(r)) continue;
+    if (lab.core && !inCoreSeason(r.date)) continue;
+    if (lab.selOnly && selection.length && !selection.includes(r.id)) continue;
+    const x = gx(r), y = gy(r);
+    if (x == null || y == null) continue;
+    pts.push({ r, x: Number(x), y: Number(y),
+               s: sized ? (sized.num ? sized.num(r) : null) : null });
+  }
+  return pts;
+}
+
+function renderScatter(host) {
+  if ((lab.colour === "band" || lab.core) && !MODEL) {
+    host.appendChild(el("p", { class: "sub", text: "Fetching the wind bands…" }));
+    loadModel().then(d => { MODEL = d; render(); });
+    return;
+  }
+  host.appendChild(el("h2", { text: "Scatter lab" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Put any measurement against any other, for every resort-day in the chosen "
+        + "range. Colour, size and small multiples are there to find the grouping that "
+        + "makes a pattern obvious. Outside the core season resorts wind down for reasons "
+        + "that have nothing to do with the weather, which flattens most weather trends "
+        + "to nothing — the core-season box is usually the first thing to tick." }));
+
+  const ctl = el("div", { class: "controls", style: "margin-bottom:0.8rem;" });
+  const sel = (key, opts, labelText) => {
+    const s = el("select", { onchange: e => { lab[key] = e.target.value; render(); } });
+    for (const [v, t] of opts) {
+      const o = el("option", { value: v, text: t });
+      if (lab[key] === v) o.setAttribute("selected", "");
+      s.appendChild(o);
+    }
+    ctl.appendChild(el("div", { class: "group" }, el("label", { text: labelText }), s));
+  };
+  const axisOpts = Object.entries(AXES).map(([k, v]) => [k, v.label]);
+  const dimOpts = Object.entries(DIMS).map(([k, v]) => [k, v.label]);
+  sel("x", axisOpts, "X:");
+  sel("y", axisOpts, "Y:");
+  sel("colour", dimOpts, "Colour:");
+  sel("size", dimOpts.filter(([k]) => k === "none" || DIMS[k].num), "Size:");
+  sel("facet", dimOpts.filter(([k]) => k === "none" || DIMS[k].cat), "Split into:");
+  sel("trend", [["none", "nothing"], ["bins", "binned mean ±1 SD"],
+                ["line", "line of best fit"]], "Trend:");
+  const check = (key, text) => {
+    const box = el("input", { type: "checkbox" });
+    box.checked = lab[key];
+    box.addEventListener("change", () => { lab[key] = box.checked; render(); });
+    ctl.appendChild(el("label",
+      { style: "display:flex;gap:0.3rem;align-items:center;color:var(--ink-2);" },
+      box, document.createTextNode(text)));
+  };
+  check("selOnly", "selected resorts only");
+  check("core", "core season only");
+  host.appendChild(ctl);
+
+  const pts = labPoints();
+  if (pts.length < 2) {
+    host.appendChild(el("p", { class: "sub",
+      text: "Nothing to plot — those two measurements never appear on the same day. "
+          + "Widen the range or pick another pair." }));
+    return;
+  }
+  const xDom = domainOf(pts.map(p => p.x)), yDom = domainOf(pts.map(p => p.y));
+  if (AXES[lab.x].dom) xDom.splice(0, 2, ...AXES[lab.x].dom);
+  if (AXES[lab.y].dom) yDom.splice(0, 2, ...AXES[lab.y].dom);
+  const colour = colourFn(pts);
+  const sizeFn = sizeScale(pts);
+
+  if (lab.facet === "none") {
+    const w = Math.max(620, ($("#view").clientWidth || 900) - 40);
+    host.appendChild(colour.legend());
+    host.appendChild(scatterSvg(pts, xDom, yDom, w, 460, colour, sizeFn, true));
+  } else {
+    const key = DIMS[lab.facet].cat;
+    const groups = new Map();
+    for (const p of pts) {
+      const k = key(p.r) || "—";
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(p);
+    }
+    const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+    host.appendChild(colour.legend());
+    host.appendChild(el("p", { class: "hint",
+      text: "All panels share the same axes, so they can be read against each other." }));
+    const grid = el("div", { class: "facets" });
+    for (const [k, gp] of ordered) {
+      const cell = el("div", { class: "facet" });
+      cell.appendChild(el("div", { class: "facet-t",
+        text: k + "  (" + gp.length + ")" }));
+      cell.appendChild(scatterSvg(gp, xDom, yDom, 300, 200, colour, sizeFn, false));
+      grid.appendChild(cell);
+    }
+    host.appendChild(grid);
+  }
+
+  const fit = fitLine(pts);
+  host.appendChild(el("p", { class: "hint",
+    text: pts.length + " resort-days plotted"
+        + (fit ? `. Across everything shown, ${AXES[lab.y].label.toLowerCase()} changes by `
+               + fmt(fit.slope, 2) + " per unit of " + AXES[lab.x].label.toLowerCase()
+               + " (r² = " + fmt(fit.r2, 2) + ")." : ".")
+        + " r² near zero means the line is decoration; a pattern hiding inside one group "
+        + "will show up under “Split into” long before it shows up here." }));
+  host.appendChild(csvLink(pts));
+}
+
+/* Colours: up to eight categories get their own, a numeric dimension gets the
+   sequential ramp, and anything with more categories than colours keeps its
+   biggest eight and greys out the tail rather than recycling hues. */
+function colourFn(pts) {
+  const d = DIMS[lab.colour];
+  if (!d || lab.colour === "none")
+    return { of: () => SERIES[0], legend: () => el("div") };
+  if (d.num) {
+    const vals = pts.map(p => d.num(p.r)).filter(v => v != null).map(Number);
+    if (!vals.length) return { of: () => BASE, legend: () => el("div") };
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    return {
+      of: p => { const v = d.num(p.r);
+        return v == null ? GRID : SEQ[Math.round((Number(v) - lo) / ((hi - lo) || 1) * (SEQ.length - 1))]; },
+      legend: () => {
+        const row = el("div", { class: "legend-row" });
+        row.appendChild(el("span", { text: d.label + ":" }));
+        row.appendChild(el("span", { text: fmt(lo) + (d.unit ? " " + d.unit : "") }));
+        const ramp = el("span", { class: "ramp" });
+        for (const c of SEQ) { const i = el("i"); i.style.background = c; ramp.appendChild(i); }
+        row.appendChild(ramp);
+        row.appendChild(el("span", { text: fmt(hi) + (d.unit ? " " + d.unit : "") }));
+        return row;
+      },
+    };
+  }
+  const counts = new Map();
+  for (const p of pts) {
+    const k = d.cat(p.r);
+    if (k != null) counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])
+    .slice(0, SERIES.length).map(e => e[0]);
+  const idx = new Map(top.map((k, i) => [k, i]));
+  const spare = counts.size > top.length;
+  return {
+    of: p => { const k = d.cat(p.r);
+      return idx.has(k) ? SERIES[idx.get(k)] : BASE; },
+    legend: () => {
+      const row = el("div", { class: "legend" });
+      for (const k of top) {
+        const s = el("span", {}, el("span", { class: "dot" }), document.createTextNode(k));
+        s.querySelector(".dot").style.background = SERIES[idx.get(k)];
+        row.appendChild(s);
+      }
+      if (spare) {
+        const s = el("span", {}, el("span", { class: "dot" }),
+          document.createTextNode("everything else (" + (counts.size - top.length) + " more)"));
+        s.querySelector(".dot").style.background = BASE;
+        row.appendChild(s);
+      }
+      return row;
+    },
+  };
+}
+function sizeScale(pts) {
+  if (lab.size === "none") return () => 4;
+  const vals = pts.map(p => p.s).filter(v => v != null).map(Number);
+  if (!vals.length) return () => 4;
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  return p => p.s == null ? 2.5
+    : 2.5 + 6 * Math.sqrt((Number(p.s) - lo) / ((hi - lo) || 1));
+}
+
+function scatterSvg(pts, xDom, yDom, w, h, colour, sizeFn, big) {
+  const m = { l: big ? 52 : 34, r: 14, t: 12, b: big ? 42 : 26, w, h };
+  const x = v => m.l + (v - xDom[0]) / (xDom[1] - xDom[0]) * (w - m.l - m.r);
+  const y = v => m.t + (1 - (v - yDom[0]) / (yDom[1] - yDom[0])) * (h - m.t - m.b);
+  const svg = chartSvg(w, h);
+  const nt = big ? 5 : 3;
+  const dp = d => Math.abs(d) < 10 ? 1 : 0;
+  for (const v of niceTicks(yDom, nt)) {
+    const yy = y(v);
+    svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: yy, y2: yy, stroke: GRID }));
+    svg.appendChild(el("text", { x: m.l - 5, y: yy + 3, "text-anchor": "end",
+      "font-size": big ? 10 : 8, fill: MUTED, text: fmt(v, dp(yDom[1] - yDom[0])) }));
+  }
+  for (const v of niceTicks(xDom, nt))
+    svg.appendChild(el("text", { x: x(v), y: h - (big ? 24 : 8), "text-anchor": "middle",
+      "font-size": big ? 10 : 8, fill: MUTED, text: fmt(v, dp(xDom[1] - xDom[0])) }));
+  if (big) {
+    svg.appendChild(el("text", { x: (m.l + w - m.r) / 2, y: h - 6, "text-anchor": "middle",
+      "font-size": 11, fill: INK2,
+      text: axisTitle(lab.x) }));
+    svg.appendChild(el("text", { x: 12, y: (m.t + h - m.b) / 2, "font-size": 11, fill: INK2,
+      "text-anchor": "middle", transform: `rotate(-90 12 ${(m.t + h - m.b) / 2})`,
+      text: axisTitle(lab.y) }));
+  }
+  // Opacity falls as the cloud thickens, so dense regions read as dense
+  // rather than as one solid block of colour.
+  const op = Math.max(0.25, Math.min(0.8, 90 / Math.sqrt(pts.length * 40)));
+  for (const p of pts) {
+    const c = el("circle", { cx: x(p.x).toFixed(1), cy: y(p.y).toFixed(1),
+      r: (big ? 1 : 0.62) * sizeFn(p), fill: colour.of(p), "fill-opacity": op,
+      stroke: SURF, "stroke-width": big ? 1 : 0.4 });
+    c.addEventListener("mousemove", e => showTip(
+      `<div class="t-date">${p.r.name}</div><div class="t-sub">${p.r.date}</div><table>` +
+      `<tr><td>${AXES[lab.x].label}</td><td>${fmt(p.x, 1)} ${AXES[lab.x].unit}</td></tr>` +
+      `<tr><td>${AXES[lab.y].label}</td><td>${fmt(p.y, 1)} ${AXES[lab.y].unit}</td></tr>` +
+      (p.r.pct != null ? `<tr><td>Lifts</td><td>${p.r.lifts_open}/${p.r.lifts_total}</td></tr>` : "") +
+      `</table>`, e.clientX, e.clientY));
+    c.addEventListener("mouseleave", hideTip);
+    svg.appendChild(c);
+  }
+  if (lab.trend === "line") {
+    const f = fitLine(pts);
+    if (f) svg.appendChild(el("line", { x1: x(xDom[0]), x2: x(xDom[1]),
+      y1: y(f.slope * xDom[0] + f.intercept), y2: y(f.slope * xDom[1] + f.intercept),
+      stroke: INK, "stroke-width": big ? 2 : 1.2, "stroke-opacity": 0.75 }));
+  } else if (lab.trend === "bins") {
+    const bins = binMeans(pts, xDom);
+    if (bins.length > 1) {
+      const band = bins.map(b => `${x(b.mid).toFixed(1)},${y(b.mean + b.sd).toFixed(1)}`)
+        .concat(bins.slice().reverse()
+          .map(b => `${x(b.mid).toFixed(1)},${y(b.mean - b.sd).toFixed(1)}`));
+      svg.appendChild(el("path", { d: "M" + band.join("L") + "Z", fill: INK,
+        "fill-opacity": 0.08 }));
+      svg.appendChild(el("path", { fill: "none", stroke: INK,
+        "stroke-width": big ? 2.2 : 1.4, "stroke-opacity": 0.8,
+        d: "M" + bins.map(b => `${x(b.mid).toFixed(1)},${y(b.mean).toFixed(1)}`).join("L") }));
+    }
+  }
+  return svg;
+}
+
+function csvLink(pts) {
+  const head = ["resort", "date", "country", "area",
+                AXES[lab.x].label, AXES[lab.y].label];
+  const body = pts.map(p => [p.r.name, p.r.date, p.r.country, p.r.area || "", p.x, p.y]
+    .map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(","));
+  const url = URL.createObjectURL(
+    new Blob([[head.join(","), ...body].join("\n")], { type: "text/csv" }));
+  const a = el("a", { href: url, download: `${lab.x}-vs-${lab.y}.csv`,
+    class: "hint", style: "display:inline-block;margin-top:0.3rem;color:#2b6cb0;",
+    text: "Download this slice as CSV" });
+  return a;
+}
+
 /* ---------- how the model works ---------- */
 let MODEL = null, modelPromise = null, modelResort = null;
 /* Cells the ordering got wrong, split by which way it was wrong: amber ran
@@ -1252,7 +1592,7 @@ function render() {
   try {
     ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
        lifts: renderLifts, league: renderLeague, plan: renderPlan,
-       model: renderModel })[tab](host);
+       scatter: renderScatter, model: renderModel })[tab](host);
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
   }
