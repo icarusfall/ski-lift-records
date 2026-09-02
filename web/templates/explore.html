@@ -46,6 +46,14 @@
   .chip.on .dot { display: inline-block; }
   .hint { color: var(--muted); font-size: 0.76rem; margin-top: 0.4rem; }
   h2 { font-size: 1rem; margin-bottom: 0.2rem; }
+  h3 { font-size: 0.92rem; margin: 1.6rem 0 0.2rem; padding-top: 1rem;
+       border-top: 1px solid var(--grid); }
+  .stats { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 0.6rem 0 0.5rem; }
+  .stat { flex: 1 1 150px; background: var(--wash); border: 1px solid var(--grid);
+          border-radius: 6px; padding: 0.55rem 0.7rem; }
+  .stat-v { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-l { font-size: 0.72rem; color: var(--ink-2); }
+  .stat-n { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
   .sub { color: var(--ink-2); font-size: 0.8rem; margin-bottom: 0.8rem; }
   /* heatmap */
   .hm-scroll { overflow-x: auto; padding-bottom: 0.4rem; }
@@ -184,6 +192,7 @@ const METRICS = {
 const TABS = [
   ["heatmap", "Season heatmap"], ["compare", "Compare"], ["wind", "Wind vs open"],
   ["lifts", "Lift reliability"], ["league", "League table"], ["plan", "Plan a trip"],
+  ["model", "How it works"],
 ];
 
 /* ---------- utilities ---------- */
@@ -877,17 +886,373 @@ function renderPlan(host) {
         + "few days." }));
 }
 
+/* ---------- how the model works ---------- */
+let MODEL = null, modelPromise = null, modelResort = null;
+/* Cells the ordering got wrong, split by which way it was wrong: amber ran
+   when the order said it should be shut, red shut while the order said run. */
+const OK_OPEN = "#86b6ef", OK_SHUT = "#eceae4", ERR_RAN = "#eda100", ERR_SHUT = "#e34948";
+
+function loadModel() {
+  if (!modelPromise) modelPromise = fetch("/api/model.json").then(r => r.json());
+  return modelPromise;
+}
+function inCoreSeason(dstr) {
+  const md = dstr.slice(5), [a, b] = MODEL.core_season;
+  return md >= a || md <= b;
+}
+function bandOf(g) {
+  for (const b of MODEL.bins) if (g < b.upper) return b.name;
+  return MODEL.bins[MODEL.bins.length - 1].name;
+}
+function stat(label, value, note) {
+  return el("div", { class: "stat" },
+    el("div", { class: "stat-v", text: value }),
+    el("div", { class: "stat-l", text: label }),
+    note ? el("div", { class: "stat-n", text: note }) : null);
+}
+
+function renderModel(host) {
+  if (!MODEL) {
+    host.appendChild(el("p", { class: "sub", text: "Working out the model…" }));
+    loadModel().then(d => { MODEL = d; render(); })
+               .catch(e => { host.innerHTML = ""; host.appendChild(
+                 el("p", { class: "sub", text: "Could not load the model: " + e.message })); });
+    return;
+  }
+  const ids = Object.keys(MODEL.resorts)
+    .sort((a, b) => MODEL.resorts[b].fit.cs - MODEL.resorts[a].fit.cs);
+  if (!ids.length) { host.appendChild(el("p", { class: "sub",
+    text: "No resort has enough per-lift readings yet." })); return; }
+  if (!ids.includes(modelResort)) modelResort = ids.includes("cervinia") ? "cervinia" : ids[0];
+  const R = MODEL.resorts[modelResort];
+
+  host.appendChild(el("h2", { text: "How the model works" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Two layers. The first turns weather into a share of the mountain still running. "
+        + "The second turns that share into named lifts, by assuming each resort shuts its "
+        + "lifts in a consistent order. Everything below is measured on the "
+        + MODEL.core_season[0] + " to " + MODEL.core_season[1] + " core season only." }));
+
+  const pick = el("select", { onchange: e => { modelResort = e.target.value; render(); } });
+  for (const id of ids) {
+    const o = el("option", { value: id, text: MODEL.resorts[id].name
+      + " — " + MODEL.resorts[id].verdict });
+    if (id === modelResort) o.setAttribute("selected", "");
+    pick.appendChild(o);
+  }
+  const ctl = el("div", { class: "controls", style: "margin-bottom:0.9rem;" },
+    el("div", { class: "group" }, el("label", { text: "Resort:" }), pick));
+  host.appendChild(ctl);
+
+  renderScorecard(host, R);
+  renderDoseResponse(host, R);
+  renderScalogram(host, R);
+  renderLadder(host, R);
+  renderModelTable(host, ids);
+}
+
+function renderScorecard(host, R) {
+  const f = R.fit, h = R.holdout, t = MODEL.thresholds;
+  const box = el("div", { class: "stats" },
+    stat("reproducibility (CR)", fmt(100 * f.cr, 1) + "%",
+         "baseline " + fmt(100 * f.mmr, 1) + "%"),
+    stat("scalability (CS)", fmt(f.cs, 3),
+         "nested needs " + fmt(t.cs, 2)),
+    stat("CS on held-out days", h ? fmt(h.cs, 3) : "—",
+         h ? "days the order never saw" : "not enough days"),
+    stat("closures to learn from", fmt(f.pct_closed, 1) + "%",
+         f.mixed_snaps + " partly-open snapshots"));
+  host.appendChild(box);
+  const thin = f.mixed_snaps < MODEL.thresholds.mixed;
+  host.appendChild(el("p", { class: "hint",
+    text: "Verdict: " + R.verdict + ". Read CS, not CR — CR is above 95% for every resort "
+        + "including the ones that fail, because most lifts are open most of the time and "
+        + "“predict open for everything” already scores that well. CS is how much of the "
+        + "remaining headroom the ordering captures."
+        + (thin ? " This resort is marked thin: only a partly-open snapshot tests an ordering "
+                + "at all, and there are fewer than " + MODEL.thresholds.mixed + " of them." : "") }));
+}
+
+function renderDoseResponse(host, R) {
+  host.appendChild(el("h3", { text: "Layer 1 — how much of the mountain survives the wind" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "One point per day. The step line is the model's estimate for each wind band, "
+        + "pulled toward the all-resort average where the band is thin; the dashed line is "
+        + "that all-resort average." }));
+
+  const pts = [...(byResort.get(modelResort) || new Map()).values()]
+    .filter(r => !r.error && r.gust != null && r.pct != null && inCoreSeason(r.date));
+  const w = Math.max(620, ($("#view").clientWidth || 900) - 40), h = 340;
+  const m = { l: 46, r: 16, t: 26, b: 42, w, h };
+  // Round to the next 20 rather than niceMax: gusts stop around 120, and
+  // niceMax would round that to 200 and leave half the chart empty.
+  const maxG = Math.max(100, Math.ceil(Math.max(...pts.map(p => Number(p.gust)), 0) / 20) * 20);
+  const x = v => m.l + Math.min(v, maxG) / maxG * (w - m.l - m.r);
+  const y = v => m.t + (1 - v / 100) * (h - m.t - m.b);
+  const svg = chartSvg(w, h);
+
+  // Band shading, alternating so the four bands read as zones rather than ticks.
+  let lo = 0;
+  MODEL.bins.forEach((b, i) => {
+    const hi = Math.min(b.upper, maxG);
+    if (hi > lo) {
+      if (i % 2) svg.appendChild(el("rect", { x: x(lo), y: m.t, width: x(hi) - x(lo),
+        height: h - m.t - m.b, fill: WASH }));
+      svg.appendChild(el("text", { x: (x(lo) + x(hi)) / 2, y: m.t - 10,
+        "text-anchor": "middle", "font-size": 10, fill: MUTED, text: b.name }));
+    }
+    lo = b.upper;
+  });
+  axisLeft(svg, y, [0, 100], m, "%");
+  for (let g = 0; g <= maxG; g += maxG / 5)
+    svg.appendChild(el("text", { x: x(g), y: h - 24, "text-anchor": "middle",
+      "font-size": 10, fill: MUTED, text: fmt(g) }));
+  svg.appendChild(el("text", { x: (m.l + w - m.r) / 2, y: h - 8, "text-anchor": "middle",
+    "font-size": 11, fill: INK2, text: "Daily max wind gust (km/h)" }));
+
+  for (const p of pts) {
+    const c = el("circle", { cx: x(Number(p.gust)).toFixed(1), cy: y(Number(p.pct)).toFixed(1),
+      r: 4, fill: SERIES[0], "fill-opacity": 0.55, stroke: SURF, "stroke-width": 1.5 });
+    c.addEventListener("mousemove", e => showTip(
+      `<div class="t-date">${p.date}</div>` +
+      `<table><tr><td>Lifts</td><td>${p.lifts_open}/${p.lifts_total} (${fmt(p.pct)}%)</td></tr>` +
+      `<tr><td>Gust</td><td>${fmt(p.gust)} km/h</td></tr>` +
+      `<tr><td>Band</td><td>${bandOf(Number(p.gust))}</td></tr></table>`, e.clientX, e.clientY));
+    c.addEventListener("mouseleave", hideTip);
+    svg.appendChild(c);
+  }
+
+  // Step lines last so they sit above the cloud.
+  const step = (get, colour, dash) => {
+    let lo = 0;
+    for (const b of MODEL.bins) {
+      const hi = Math.min(b.upper, maxG), v = get(b.name);
+      if (hi <= lo || v == null) { lo = b.upper; continue; }
+      svg.appendChild(el("line", { x1: x(lo), x2: x(hi), y1: y(v), y2: y(v),
+        stroke: colour, "stroke-width": 2.5, "stroke-dasharray": dash || "" }));
+      lo = b.upper;
+    }
+  };
+  step(b => MODEL.pooled[b]?.pct_open, BASE, "5 4");
+  step(b => R.response[b]?.pct_open, SERIES[1]);
+  host.appendChild(svg);
+
+  const rows = MODEL.bins.map(b => R.response[b.name] ? { band: b.name, ...R.response[b.name] } : null)
+    .filter(Boolean);
+  const t = el("table", { class: "league" });
+  t.appendChild(el("thead", {}, el("tr", {},
+    el("th", { text: "wind band" }), el("th", { text: "days seen" }),
+    el("th", { text: "est. % open" }), el("th", { text: "lost-day rate" }))));
+  const tb = el("tbody");
+  for (const r of rows)
+    tb.appendChild(el("tr", {},
+      el("td", { text: r.band + (r.shrunk ? " (thin)" : "") }),
+      el("td", { text: String(r.n) }),
+      el("td", { text: fmt(r.pct_open, 1) + "%" }),
+      el("td", { text: fmt(100 * r.p_lost, 0) + "%" })));
+  t.appendChild(tb);
+  host.appendChild(t);
+  host.appendChild(el("p", { class: "hint",
+    text: "A lost day means under half the lifts running. “Thin” marks a band with too few "
+        + "observed days to stand on its own, so its estimate has been pulled toward the average." }));
+}
+
+function renderScalogram(host, R) {
+  host.appendChild(el("h3", { text: "Layer 2 — does the resort shut its lifts in a fixed order?" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Every snapshot is a row, fullest mountain at the top; every lift is a column, "
+        + "first-to-shut on the left. The black line is the model's only prediction: knowing "
+        + "how many lifts ran, it says which ones. A perfectly nested resort is a clean "
+        + "staircase with nothing on the wrong side of the line." }));
+
+  const lifts = R.ladder.map(l => l.name);
+  const rows = R.scalogram;
+  const avail = Math.max(560, ($("#view").clientWidth || 900) - 40);
+  const labelW = 62, nameH = 108;
+  const cw = Math.max(4, Math.min(16, Math.floor((avail - labelW - 8) / lifts.length)));
+  const ch = Math.max(4, Math.min(13, Math.floor(620 / rows.length)));
+  const w = labelW + cw * lifts.length + 8, h = nameH + ch * rows.length + 6;
+  const svg = chartSvg(w, h);
+
+  if (cw >= 7) {
+    lifts.forEach((name, i) => {
+      const cx = labelW + i * cw + cw / 2;
+      svg.appendChild(el("text", { x: cx, y: nameH - 6, "font-size": Math.min(10, cw + 1),
+        fill: R.ladder[i].link ? SERIES[1] : MUTED, "text-anchor": "start",
+        transform: `rotate(-90 ${cx} ${nameH - 6})`,
+        text: (name.length > 20 ? name.slice(0, 19) + "…" : name) }));
+    });
+  }
+
+  rows.forEach((row, ri) => {
+    const yTop = nameH + ri * ch;
+    if (ch >= 9)
+      svg.appendChild(el("text", { x: labelW - 6, y: yTop + ch - 2, "text-anchor": "end",
+        "font-size": 9, fill: MUTED, text: row.date.slice(5) }));
+    // Predicted open = the row's k most reliable *present* lifts, so absent
+    // readings are skipped rather than counted against the ordering.
+    const present = [];
+    for (let i = 0; i < lifts.length; i++) {
+      if (row.cells[i] !== "-") { present.push(i); continue; }
+      // No reading. An empty hole would read as "shut", so outline it instead.
+      svg.appendChild(el("rect", { x: labelW + i * cw, y: yTop, width: cw - 1,
+        height: ch - 1, rx: 1, fill: SURF, stroke: GRID, "stroke-width": 0.7 }));
+    }
+    const firstOpen = present.length - row.open;
+    let frontierX = labelW + cw * lifts.length;
+    present.forEach((ci, pi) => {
+      const isOpen = row.cells[ci] === "o", predOpen = pi >= firstOpen;
+      if (pi === firstOpen) frontierX = labelW + ci * cw;
+      const fill = isOpen === predOpen ? (isOpen ? OK_OPEN : OK_SHUT)
+                                       : (isOpen ? ERR_RAN : ERR_SHUT);
+      const rect = el("rect", { x: labelW + ci * cw, y: yTop, width: cw - 1, height: ch - 1,
+        rx: 1, fill });
+      rect.addEventListener("mousemove", e => showTip(
+        `<div class="t-date">${lifts[ci]}</div><div class="t-sub">${row.date}</div>` +
+        `<table><tr><td>Observed</td><td>${isOpen ? "running" : "shut"}</td></tr>` +
+        `<tr><td>Order says</td><td>${predOpen ? "running" : "shut"}</td></tr>` +
+        `<tr><td>Mountain</td><td>${row.open}/${row.seen} lifts open</td></tr></table>`,
+        e.clientX, e.clientY));
+      rect.addEventListener("mouseleave", hideTip);
+      svg.appendChild(rect);
+    });
+    svg.appendChild(el("line", { x1: frontierX, x2: frontierX, y1: yTop, y2: yTop + ch,
+      stroke: INK, "stroke-width": 1.2 }));
+  });
+  // Join the per-row frontiers into one staircase.
+  let prevX = null;
+  rows.forEach((row, ri) => {
+    const present = [];
+    for (let i = 0; i < lifts.length; i++) if (row.cells[i] !== "-") present.push(i);
+    const firstOpen = present.length - row.open;
+    const fx = firstOpen >= present.length ? labelW + cw * lifts.length
+                                           : labelW + present[firstOpen] * cw;
+    if (prevX != null && fx !== prevX)
+      svg.appendChild(el("line", { x1: prevX, x2: fx, y1: nameH + ri * ch,
+        y2: nameH + ri * ch, stroke: INK, "stroke-width": 1.2 }));
+    prevX = fx;
+  });
+  host.appendChild(el("div", { class: "hm-scroll" }, svg));
+
+  const lg = el("div", { class: "legend-row" });
+  const key = (colour, label) => {
+    const s = el("span", {}, el("span", { class: "sw" }), document.createTextNode(label));
+    s.querySelector(".sw").style.background = colour;
+    s.querySelector(".sw").style.boxShadow = "inset 0 0 0 1px rgba(11,11,11,0.12)";
+    return s;
+  };
+  lg.appendChild(key(OK_OPEN, "ran, as the order predicts"));
+  lg.appendChild(key(OK_SHUT, "shut, as the order predicts"));
+  lg.appendChild(key(ERR_RAN, "ran when the order said shut"));
+  lg.appendChild(key(ERR_SHUT, "shut when the order said run"));
+  host.appendChild(lg);
+  host.appendChild(el("p", { class: "hint",
+    text: R.fit.errors + " of " + R.fit.cells + " cells are on the wrong side of the line. "
+        + "Link lifts are named in orange. Rows where the whole mountain ran are free marks — "
+        + "they are why CR flatters every resort and why CS is the number to read." }));
+}
+
+function renderLadder(host, R) {
+  host.appendChild(el("h3", { text: "The closure ladder" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "The order itself: first to shut at the top. Bearings come from OpenStreetMap — "
+        + "if the lifts at the top share an orientation, this ordering is really a crosswind "
+        + "effect in disguise, which is the next thing to build." }));
+  const host2 = el("div");
+  for (const l of R.ladder) {
+    const row = el("div", { class: "lift-row" });
+    const nm = el("div", { class: "lift-name", text: l.name });
+    if (l.link) nm.appendChild(el("span", { class: "badge", text: "LINK" }));
+    row.appendChild(nm);
+    const track = el("div", { class: "lift-track" });
+    const fill = el("div", { class: "lift-fill" });
+    fill.style.width = l.open + "%";
+    fill.style.background = seqColor(l.open);
+    track.appendChild(fill);
+    row.appendChild(track);
+    row.appendChild(el("div", { class: "lift-val", text: fmt(l.open, 0) + "%" }));
+    row.appendChild(el("div", { class: "lift-val", style: "width:56px;",
+      text: l.errs ? l.errs + " off" : "" }));
+    const bear = el("div", { class: "lift-val", style: "width:74px;" });
+    if (l.bearing != null) {
+      const s = el("svg", { width: 14, height: 14, viewBox: "0 0 14 14",
+        style: "vertical-align:-2px;margin-right:4px;" });
+      s.appendChild(el("path", { d: "M7 1 L11 12 L7 9.4 L3 12 Z", fill: INK2,
+        transform: `rotate(${l.bearing} 7 7)` }));
+      bear.appendChild(s);
+      bear.appendChild(document.createTextNode(fmt(l.bearing, 0) + "°"));
+    } else {
+      bear.textContent = "—";
+    }
+    row.appendChild(bear);
+    host2.appendChild(row);
+  }
+  host.appendChild(host2);
+  const known = R.ladder.filter(l => l.bearing != null).length;
+  host.appendChild(el("p", { class: "hint",
+    text: known + " of " + R.ladder.length + " lifts are matched to OpenStreetMap geometry; "
+        + "the rest have no bearing yet. “off” counts the snapshots where that lift was on the "
+        + "wrong side of the line." }));
+}
+
+function renderModelTable(host, ids) {
+  host.appendChild(el("h3", { text: "Every resort with per-lift readings" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Only resorts with a primary scraper appear: the bergfex-only ones report a lift "
+        + "count and nothing else, so there is no matrix to scale." }));
+  const t = el("table", { class: "league" });
+  t.appendChild(el("thead", {}, el("tr", {},
+    el("th", { text: "resort" }), el("th", { text: "lifts" }), el("th", { text: "% shut" }),
+    el("th", { text: "partly-open" }), el("th", { text: "CR" }), el("th", { text: "MMR" }),
+    el("th", { text: "CS" }), el("th", { text: "CS held-out" }), el("th", { text: "verdict" }))));
+  const tb = el("tbody");
+  for (const id of ids) {
+    const R = MODEL.resorts[id], f = R.fit;
+    const tr = el("tr", { style: "cursor:pointer;" + (id === modelResort ? "background:" + WASH + ";" : "") });
+    tr.addEventListener("click", () => { modelResort = id; render(); window.scrollTo({ top: 0 }); });
+    const nameCell = el("td", { text: R.name });
+    tr.appendChild(nameCell);
+    tr.appendChild(el("td", { text: String(R.ladder.length) }));
+    tr.appendChild(el("td", { text: fmt(f.pct_closed, 1) + "%" }));
+    tr.appendChild(el("td", { text: String(f.mixed_snaps) }));
+    tr.appendChild(el("td", { text: fmt(f.cr, 3) }));
+    tr.appendChild(el("td", { text: fmt(f.mmr, 3) }));
+    const cs = el("td", {});
+    const bar = el("span", { class: "bar-mini" });
+    const i = el("i");
+    i.style.width = Math.max(0, Math.min(100, 100 * f.cs)) + "%";
+    i.style.background = f.cs >= MODEL.thresholds.cs ? SERIES[2] : SERIES[3];
+    bar.appendChild(i);
+    cs.appendChild(bar);
+    cs.appendChild(document.createTextNode(" " + fmt(f.cs, 3)));
+    tr.appendChild(cs);
+    tr.appendChild(el("td", { text: R.holdout ? fmt(R.holdout.cs, 3) : "—" }));
+    tr.appendChild(el("td", { text: R.verdict }));
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  host.appendChild(t);
+  host.appendChild(el("p", { class: "hint",
+    text: "Click a row to inspect it above. Resorts marked (thin) post their score on very few "
+        + "partly-open snapshots, so treat the number as a hint rather than a finding — but "
+        + "St Anton, Tignes and Les Arcs each have more than forty and still fail, which is a "
+        + "real result: their closures are not severity-ordered, and that is where wind "
+        + "direction has to come in." }));
+}
+
 /* ---------- render dispatch ---------- */
 function render() {
   hideTip();
   const host = $("#view");
   host.innerHTML = "";
+  const ownControls = tab === "plan" || tab === "model";
   $("#resortCtl").style.display = (tab === "compare" || tab === "wind") ? "" : "none";
-  $("#rangeCtl").style.display = (tab === "plan") ? "none" : "";
-  $("#selHint").style.display = (tab === "plan") ? "none" : "";
+  $("#rangeCtl").style.display = ownControls ? "none" : "";
+  $("#selHint").style.display = ownControls ? "none" : "";
   try {
     ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
-       lifts: renderLifts, league: renderLeague, plan: renderPlan })[tab](host);
+       lifts: renderLifts, league: renderLeague, plan: renderPlan,
+       model: renderModel })[tab](host);
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
   }

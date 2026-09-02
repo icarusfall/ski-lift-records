@@ -703,5 +703,9 @@ def admin_run_resort(resort_id: str):
 
 
 if __name__ == "__main__":
+    # Only reached when run directly, i.e. locally — production is gunicorn.
+    # Jinja caches templates unless debug is on, which meant every edit to
+    # explore.html looked like it had done nothing until the server restarted.
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
