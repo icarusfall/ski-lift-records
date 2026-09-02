@@ -37,6 +37,19 @@ AERIALWAY_TYPES = {"chair_lift", "gondola", "cable_car", "t-bar", "j-bar",
                    "platter", "drag_lift", "rope_tow", "magic_carpet", "mixed_lift",
                    "funicular"}
 
+# Not every uphill lift is an aerialway. Zermatt's Gornergratbahn is a rack
+# railway, its Sunnegga and Riffelalp lines are funiculars, and Tignes' Funival
+# and Val d'Isère's are underground funiculars — all tagged `railway`, so a
+# query for `aerialway` alone cannot see them at all. That was not a name-
+# matching failure but missing data: `gornergrat`, `riffelalp`, `funival` and
+# `leisee` each returned zero ways.
+#
+# `railway=rail` on its own would drag in every mainline track inside a 0.11°
+# box, so rack railways are required to carry a `rack` tag.
+RAILWAY_TYPES = {"funicular": "funicular", "narrow_gauge": "rack_railway",
+                 "rail": "rack_railway", "light_rail": "rack_railway"}
+RAIL_MIN_LENGTH_M = 250
+
 
 def _bearing(a: dict, b: dict) -> float:
     """Compass bearing from the first point to the last, in degrees."""
@@ -67,7 +80,11 @@ def fetch_resort(resort: dict, attempts: int = 3) -> list[dict]:
     """
     lat, lon = resort["latitude"], resort["longitude"]
     bbox = f"{lat - BBOX_PAD},{lon - BBOX_PAD},{lat + BBOX_PAD},{lon + BBOX_PAD}"
-    query = f'[out:json][timeout:180];way["aerialway"]({bbox});out tags geom;'
+    query = (f'[out:json][timeout:180];('
+             f'way["aerialway"]({bbox});'
+             f'way["railway"="funicular"]({bbox});'
+             f'way["railway"]["rack"]({bbox});'
+             f');out tags geom;')
 
     delay = 30.0
     for attempt in range(1, attempts + 1):
@@ -88,14 +105,38 @@ def fetch_resort(resort: dict, attempts: int = 3) -> list[dict]:
     out = []
     for el in resp.json().get("elements", []):
         tags = el.get("tags", {})
-        kind = tags.get("aerialway")
         geom = el.get("geometry") or []
-        if kind not in AERIALWAY_TYPES or len(geom) < 2:
+        name = (tags.get("name") or "").strip() or None
+        kind = tags.get("aerialway")
+        from_rail = False
+        if not kind:
+            # A rail-based lift: a funicular, or a rack railway (which must say
+            # so, or every valley train would qualify).
+            railway = tags.get("railway")
+            if railway == "funicular" or (railway and tags.get("rack")):
+                kind = RAILWAY_TYPES.get(railway)
+                from_rail = True
+        if kind not in AERIALWAY_TYPES | {"rack_railway"} or len(geom) < 2:
+            continue
+
+        # An aerialway is one way per lift; a railway is chopped into dozens of
+        # short unnamed segments with the name held on a route relation. Taking
+        # them all buried Zermatt under 90 nameless Gornergratbahn stubs, some
+        # 2 m long, so a rail-based way must at least be named.
+        #
+        # The length floor applies to rack railways only. Funiculars are mapped
+        # as one way and a named short one is real — Zermatt's Leisee-Shuttle is
+        # 60 m and is in the observed roster. No loss for the model either way:
+        # a train on the ground is not wind-sensitive, so its bearing was never
+        # going to matter.
+        if from_rail and not name:
+            continue
+        if kind == "rack_railway" and _length_m(geom) < RAIL_MIN_LENGTH_M:
             continue
         out.append({
             "osm_id": el["id"],
             "resort_id": resort["id"],
-            "name": (tags.get("name") or "").strip() or None,
+            "name": name,
             "aerialway": kind,
             "bearing_deg": round(_bearing(geom[0], geom[-1])),
             "length_m": _length_m(geom),
@@ -177,6 +218,26 @@ def suggest_matches(resort_id: str | None = None, threshold: float = 0.72):
         stripped = TYPE_PREFIX.sub("", s)
         return stripped if stripped else s
 
+    def toks(s: str) -> set:
+        """Meaningful words of a normalised name, ignoring short connectives."""
+        return {t for t in norm(s).split() if len(t) >= 4}
+
+    def contains(a: str, b: str) -> bool:
+        """Is one name's wording wholly inside the other's?
+
+        Whole-string similarity fails on compounds and endpoint pairs that are
+        plainly the same lift: `furggsattel` vs `Furggsattel Gletscherbahn`
+        scores far below 92%, as do `goillet` vs `Lago Goillet` and `trockener
+        steg - klein matterhorn` vs the same plus `Glacier Ride`. Requiring the
+        smaller side to carry real substance is what stops `Golf` matching
+        `Olaf`; a single short token is never enough.
+        """
+        ta, tb = toks(a), toks(b)
+        if not ta or not tb:
+            return False
+        small, large = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+        return small <= large and sum(len(t) for t in small) >= 6
+
     with cursor() as cur:
         cur.execute("""
             SELECT g.osm_id, g.resort_id, g.name AS osm_name, g.aerialway
@@ -196,26 +257,48 @@ def suggest_matches(resort_id: str | None = None, threshold: float = 0.72):
     for l in lifts:
         by_resort.setdefault(l["resort_id"], []).append(l)
 
-    auto, review = [], []
+    auto, review, ambiguous = [], [], []
     for g in geoms:
         best, score = None, 0.0
+        contained = []
         for l in by_resort.get(g["resort_id"], []):
             r = difflib.SequenceMatcher(None, norm(g["osm_name"]), norm(l["name"])).ratio()
             if r > score:
                 best, score = l, r
+            if contains(g["osm_name"], l["name"]):
+                contained.append(l)
         if not best:
             continue
-        (auto if score >= 0.92 else review).append((g, best, score))
+        if score >= 0.92:
+            auto.append((g, best, score, "similar"))
+        elif len(contained) == 1:
+            auto.append((g, contained[0], score, "contained"))
+        elif len(contained) > 1:
+            # `Loze` sits inside both `Loze A` and `Loze B`; containment cannot
+            # choose between them, and guessing is how a lift gets the wrong
+            # geometry for good. Hand it to a human instead.
+            ambiguous.append((g, contained, score))
+        else:
+            review.append((g, best, score))
 
     if auto:
         with cursor() as cur:
-            for g, l, score in auto:
+            for g, l, score, _ in auto:
                 cur.execute("UPDATE lift_geometry SET lift_id = %s, match_score = %s "
                             "WHERE osm_id = %s AND resort_id = %s",
                             (l["id"], round(score, 3), g["osm_id"], g["resort_id"]))
-    print(f"\n  matched automatically (>=92% similar): {len(auto)}")
-    for g, l, s in auto[:10]:
-        print(f"     {g['osm_name'][:30]:<32} -> {l['name'][:30]}  ({s:.0%})")
+
+    by_sim = [x for x in auto if x[3] == "similar"]
+    by_con = [x for x in auto if x[3] == "contained"]
+    print(f"\n  matched automatically: {len(auto)}"
+          f"  ({len(by_sim)} >=92% similar, {len(by_con)} by containment)")
+    for g, l, s, _ in by_con[:12]:
+        print(f"     {g['osm_name'][:34]:<36} -> {l['name'][:30]}  (contained, {s:.0%})")
+    if ambiguous:
+        print(f"\n  containment was ambiguous ({len(ambiguous)}) — left for a human:")
+        for g, ls, s in ambiguous[:10]:
+            names = ", ".join(l["name"][:18] for l in ls[:3])
+            print(f"     {g['osm_name'][:34]:<36} ?  {names}")
     plausible = [x for x in review if x[2] >= threshold]
     print(f"\n  needs a human ({threshold:.0%}-92%): {len(plausible)}")
     for g, l, s in plausible[:15]:
