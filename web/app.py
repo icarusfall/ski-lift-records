@@ -291,6 +291,102 @@ def api_geometry(resort_id: str):
     return resp
 
 
+def _lift_metadata() -> dict:
+    """(resort, lift name) -> type, link flag and OSM bearing.
+
+    Bearing is what turns the closure ladder into an argument rather than a
+    list: if the lifts at the top of the order share an orientation, the
+    ordering is really a crosswind effect wearing a disguise.
+    """
+    with cursor() as cur:
+        cur.execute("""
+            SELECT c.resort_id, c.name, c.is_link, c.lift_type,
+                   AVG(g.bearing_deg) AS bearing, AVG(g.length_m) AS length_m
+            FROM lifts c
+            LEFT JOIN lift_geometry g ON g.lift_id = c.id
+            WHERE c.alias_of IS NULL
+            GROUP BY c.resort_id, c.name, c.is_link, c.lift_type
+        """)
+        return {(r["resort_id"], r["name"]): r for r in cur.fetchall()}
+
+
+@app.route("/api/model.json")
+def api_model():
+    """Everything the model knows, so the explorer can show its working.
+
+    Three things per resort: the dose-response bins that turn wind into an
+    expected share open, the closure ladder that turns that share into named
+    lifts, and the raw scalogram both rest on. Errors are deliberately *not*
+    pre-computed — the client re-derives them from each row's open count, so
+    the page performs the prediction rather than being told the answer.
+    """
+    from scraper import model as m
+    from scraper import nested as n
+
+    with cursor() as cur:
+        cur.execute("SELECT id, name, area, country FROM resorts")
+        names = {r["id"]: r for r in cur.fetchall()}
+    meta = _lift_metadata()
+    pooled = m.pooled_response()
+    out = {}
+
+    for rid, a in n.analyse_all().items():
+        fit, hold = a["fit"], a["holdout"]
+        ladder = []
+        for name in a["order"]:
+            opens, seen = a["rates"][name]
+            md = meta.get((rid, name)) or {}
+            ladder.append({
+                "name": name, "open": round(100 * opens / seen, 1), "seen": seen,
+                "errs": fit["per_lift"].get(name, 0),
+                "link": bool(md.get("is_link")), "type": md.get("lift_type"),
+                "bearing": _plain(md.get("bearing")),
+                "length_m": _plain(md.get("length_m")),
+            })
+        # Rows ordered by how much of the mountain was running: a nested resort
+        # then draws a staircase, and that is the whole claim in one picture.
+        rows = []
+        for sid, row in a["matrix"].items():
+            cells = "".join(
+                "-" if name not in row else ("o" if row[name] else "x")
+                for name in a["order"])
+            rows.append({"date": str(a["dates"][sid]),
+                         "open": sum(1 for v in row.values() if v),
+                         "seen": len(row), "cells": cells})
+        rows.sort(key=lambda r: (-r["open"] / r["seen"], r["date"]))
+
+        resp = m.shrunk_response(rid, pooled)
+        own = m.observed_response(rid)
+        out[rid] = {
+            "name": names.get(rid, {}).get("name", rid),
+            "area": names.get(rid, {}).get("area"),
+            "country": names.get(rid, {}).get("country"),
+            "fit": {k: _plain(v) for k, v in fit.items() if k != "per_lift"},
+            "holdout": {"cr": hold["cr"], "cs": hold["cs"], "cells": hold["cells"]}
+                       if hold else None,
+            "verdict": n._verdict(fit),
+            "ladder": ladder,
+            "scalogram": rows,
+            "response": {b: {"n": own.get(b, {}).get("n", 0),
+                             "pct_open": v["pct_open"], "p_lost": v["p_lost"],
+                             "shrunk": bool(v.get("shrunk"))}
+                         for b, v in resp.items()},
+        }
+
+    payload = {
+        "core_season": list(n.CORE_SEASON),
+        "bins": [{"upper": u, "name": b} for u, b in m.BINS],
+        "thresholds": {"cr": n.CR_GOOD, "cs": n.CS_GOOD,
+                       "mixed": n.MIN_MIXED_SNAPSHOTS},
+        "pooled": {b: {"n": v["n"], "pct_open": v["pct_open"],
+                       "p_lost": v["p_lost"]} for b, v in pooled.items()},
+        "resorts": out,
+    }
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "public, max-age=1800"
+    return resp
+
+
 @app.route("/api/outlook.json")
 def api_outlook():
     """Expected conditions for a calendar window, per resort.

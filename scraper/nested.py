@@ -38,34 +38,41 @@ MIN_SNAPSHOTS = 15
 MIN_MIXED_SNAPSHOTS = 20
 
 
-def _matrix(resort_id: str, all_kinds: bool = False, core_season: bool = True):
-    """{snapshot_id: {lift_name: is_open}} for one resort.
+def _matrices(resort_id: str | None = None, all_kinds: bool = False,
+              core_season: bool = True) -> dict[str, tuple[dict, dict]]:
+    """{resort: ({snapshot_id: {lift: is_open}}, {snapshot_id: date})}.
+
+    Every resort in one query by default: the web view scores all thirteen at
+    once, and thirteen round trips to a remote Postgres is the slow way to do
+    that.
 
     Rows are snapshots rather than days: a wind hold declared at opening and
     lifted by lunchtime is two different states of the mountain, and collapsing
     them to a day would hide exactly the closures the project is about.
     """
-    kind_clause = "" if all_kinds else "AND c.kind = 'lift'"
-    season_clause = ("""AND (TO_CHAR(s.snapshot_date, 'MM-DD') >= %(start)s
-                           OR TO_CHAR(s.snapshot_date, 'MM-DD') <= %(end)s)"""
-                     if core_season else "")
+    clauses = ["s.scrape_error IS NULL", "lr.status IN ('open', 'closed', 'hold')"]
+    if not all_kinds:
+        clauses.append("c.kind = 'lift'")
+    if resort_id:
+        clauses.append("c.resort_id = %(rid)s")
+    if core_season:
+        clauses.append("(TO_CHAR(s.snapshot_date, 'MM-DD') >= %(start)s"
+                       " OR TO_CHAR(s.snapshot_date, 'MM-DD') <= %(end)s)")
     with cursor() as cur:
         cur.execute(f"""
-            SELECT s.id AS snapshot_id, s.snapshot_date, c.name,
+            SELECT c.resort_id, s.id AS snapshot_id, s.snapshot_date, c.name,
                    (lr.status = 'open') AS is_open
             FROM lift_readings lr
             JOIN lifts l ON l.id = lr.lift_id
             JOIN lifts c ON c.id = COALESCE(l.alias_of, l.id)
             JOIN snapshots s ON s.id = lr.snapshot_id
-            WHERE c.resort_id = %(rid)s AND s.scrape_error IS NULL
-              AND lr.status IN ('open', 'closed', 'hold')
-              {kind_clause}
-              {season_clause}
+            WHERE {' AND '.join(clauses)}
         """, {"rid": resort_id, "start": CORE_SEASON[0], "end": CORE_SEASON[1]})
         rows = cur.fetchall()
 
-    mat, dates, seen = defaultdict(dict), {}, defaultdict(int)
+    mats = defaultdict(lambda: (defaultdict(dict), {}, defaultdict(int)))
     for r in rows:
+        mat, dates, seen = mats[r["resort_id"]]
         # A lift read twice in one snapshot (two sources) counts once; 'closed'
         # wins, since a source that lists a lift as shut has seen something.
         prev = mat[r["snapshot_id"]].get(r["name"])
@@ -74,11 +81,19 @@ def _matrix(resort_id: str, all_kinds: bool = False, core_season: bool = True):
         dates[r["snapshot_id"]] = r["snapshot_date"]
         seen[r["name"]] += 1
 
-    keep = {n for n, c in seen.items() if c >= MIN_LIFT_READINGS}
-    mat = {sid: {n: v for n, v in row.items() if n in keep}
-           for sid, row in mat.items()}
-    mat = {sid: row for sid, row in mat.items() if len(row) >= 3}
-    return mat, {sid: dates[sid] for sid in mat}
+    out = {}
+    for rid, (mat, dates, seen) in mats.items():
+        keep = {n for n, c in seen.items() if c >= MIN_LIFT_READINGS}
+        m = {sid: {n: v for n, v in row.items() if n in keep}
+             for sid, row in mat.items()}
+        m = {sid: row for sid, row in m.items() if len(row) >= 3}
+        out[rid] = (m, {sid: dates[sid] for sid in m})
+    return out
+
+
+def _matrix(resort_id: str, all_kinds: bool = False, core_season: bool = True):
+    """One resort's matrix and snapshot dates."""
+    return _matrices(resort_id, all_kinds, core_season).get(resort_id, ({}, {}))
 
 
 def _rates(mat: dict) -> dict[str, tuple[int, int]]:
@@ -169,8 +184,7 @@ def holdout(mat: dict, dates: dict) -> dict | None:
     return score(test, closure_order(train))
 
 
-def analyse(resort_id: str, all_kinds: bool = False) -> dict | None:
-    mat, dates = _matrix(resort_id, all_kinds=all_kinds)
+def _analyse_matrix(resort_id: str, mat: dict, dates: dict) -> dict | None:
     if len(mat) < MIN_SNAPSHOTS:
         return None
     order = closure_order(mat)
@@ -179,7 +193,22 @@ def analyse(resort_id: str, all_kinds: bool = False) -> dict | None:
         return None
     return {"resort_id": resort_id, "snapshots": len(mat), "lifts": len(order),
             "order": order, "rates": _rates(mat), "fit": fit,
-            "holdout": holdout(mat, dates)}
+            "holdout": holdout(mat, dates), "matrix": mat, "dates": dates}
+
+
+def analyse(resort_id: str, all_kinds: bool = False) -> dict | None:
+    mat, dates = _matrix(resort_id, all_kinds=all_kinds)
+    return _analyse_matrix(resort_id, mat, dates)
+
+
+def analyse_all(all_kinds: bool = False) -> dict[str, dict]:
+    """Every resort that has enough per-lift readings to scale, in one query."""
+    out = {}
+    for rid, (mat, dates) in _matrices(all_kinds=all_kinds).items():
+        a = _analyse_matrix(rid, mat, dates)
+        if a:
+            out[rid] = a
+    return out
 
 
 def _verdict(fit: dict) -> str:
@@ -196,19 +225,6 @@ def _verdict(fit: dict) -> str:
     else:
         v = "not nested"
     return v + (" (thin)" if fit["mixed_snaps"] < MIN_MIXED_SNAPSHOTS else "")
-
-
-def _resorts_with_readings() -> list[str]:
-    with cursor() as cur:
-        cur.execute("""
-            SELECT c.resort_id, COUNT(DISTINCT lr.snapshot_id) AS n
-            FROM lift_readings lr
-            JOIN lifts l ON l.id = lr.lift_id
-            JOIN lifts c ON c.id = COALESCE(l.alias_of, l.id)
-            GROUP BY c.resort_id HAVING COUNT(DISTINCT lr.snapshot_id) >= %s
-            ORDER BY c.resort_id
-        """, (MIN_SNAPSHOTS,))
-        return [r["resort_id"] for r in cur.fetchall()]
 
 
 def main():
@@ -250,9 +266,8 @@ def main():
           f"core season {CORE_SEASON[0]} to {CORE_SEASON[1]}\n")
     print(f"  {'resort':<16} {'snaps':>5} {'lifts':>5} {'shut':>6} {'mix':>4} "
           f"{'CR':>6} {'MMR':>6} {'CS':>6} {'CS(held)':>9}  verdict")
-    rows = [a for a in (analyse(r, all_kinds=all_kinds)
-                        for r in _resorts_with_readings()) if a]
-    for a in sorted(rows, key=lambda a: -a["fit"]["cs"]):
+    for a in sorted(analyse_all(all_kinds=all_kinds).values(),
+                    key=lambda a: -a["fit"]["cs"]):
         f, h = a["fit"], a["holdout"]
         held = f"{h['cs']:>9.3f}" if h else f"{'—':>9}"
         print(f"  {a['resort_id']:<16} {a['snapshots']:>5} {a['lifts']:>5} "
