@@ -12,6 +12,8 @@ Structure:
 Only entries with type == "SKI_LIFT" are included (excludes trails/pistes).
 """
 
+from collections import Counter
+
 import requests
 from .base import LiftStatus, ResortSnapshot, normalise_status
 
@@ -49,14 +51,29 @@ def scrape(resort_id: str = "la-plagne") -> ResortSnapshot:
         for lift in poi.get("lifts", []):
             dyn_map[lift["id"]] = lift.get("openingStatus", "")
 
+    # La Plagne separates lifts that share a base name with trailing dots:
+    # `BELLE PLAGNE.` is the gondola and `BELLE PLAGNE` the magic carpet beside
+    # it; `MONTALBERT.` the gondola and `MONTALBERT..` the surface lift.
+    # Stripping the dots is right — they are not part of the name — but on its
+    # own it collapsed each pair onto one row through UNIQUE (resort_id, name),
+    # so the magic carpet and the surface lift never had a record of their own
+    # and their status was overwritten by the gondola's.
+    #
+    # Disambiguate by type instead, the way lesmenuires does, and only where a
+    # collision actually remains, so the other 74 names are untouched.
+    stripped = [(lift["name"].rstrip("."), lift) for lift in static_map.values()]
+    name_counts = Counter(name for name, _ in stripped)
+
     lifts: list[LiftStatus] = []
-    for lift_id, lift in static_map.items():
-        raw_status = dyn_map.get(lift_id, "")
+    for name, lift in stripped:
+        if name_counts[name] > 1:
+            name = f"{name} / {lift.get('liftType') or 'LIFT'}"
+        raw_status = dyn_map.get(lift["id"], "")
         # Every lift is kept, whatever its status. Dropping the ones that were
         # neither OPEN nor CLOSED is what made this scraper report totals like
         # 3/77: out-of-season lifts vanished from the denominator entirely.
         lifts.append(LiftStatus(
-            name=lift["name"].rstrip("."),
+            name=name,
             status=normalise_status(raw_status),
             lift_type=lift.get("liftType", ""),
             raw_status=raw_status,
