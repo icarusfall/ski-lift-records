@@ -63,13 +63,28 @@ class QuotaExhausted(RuntimeError):
     """The API's hourly or daily allowance is spent — resume in a later pass."""
 
 
-def _resume_hint() -> str:
+def _resume_hint(reason: str = "") -> str:
+    """When to come back, which depends on *which* allowance was spent.
+
+    The hourly one clears at the top of the hour; the daily one not until
+    00:00 UTC. Quoting the hourly time for a daily 429 sends the caller round
+    a loop of passes that each do nothing, so tell the two apart.
+    """
     now = datetime.now(timezone.utc)
-    nxt = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+    if "Daily" in reason:
+        window = "Daily"
+        nxt = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        stamp = f"{nxt:%H:%M} UTC on {nxt.day} {nxt:%b}"
+    else:
+        window = "Hourly"
+        nxt = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        stamp = f"{nxt:%H:%M} UTC"
     mins = max(1, int((nxt - now).total_seconds() // 60) + 1)
-    return (f"API allowance spent. Nothing was lost — rerun "
-            f"`python -m scraper.climate --update` in about {mins} min "
-            f"(after {nxt.strftime('%H:%M')} UTC) to carry on.")
+    delay = f"{mins} min" if mins < 90 else f"{mins // 60}h {mins % 60:02d}m"
+    return (f"{window} API allowance spent. Nothing was lost — rerun "
+            f"`python -m scraper.climate --update` in about {delay} "
+            f"(after {stamp}) to carry on.")
 
 
 def _fetch(resort: dict, start: str, end: str) -> dict:
@@ -188,8 +203,8 @@ def backfill(resort_filter: str | None = None, start: str = DEFAULT_START,
             n = _store(_rows(resort["id"], daily))
             total += n
             print(f"         {n:,} days stored")
-        except QuotaExhausted:
-            print(f"\n  {_resume_hint()}")
+        except QuotaExhausted as e:
+            print(f"\n  {_resume_hint(str(e))}")
             break
         except Exception as e:
             print(f"         FAILED: {e}")
@@ -239,8 +254,8 @@ def update_recent():
             total += n
             done += 1
             print(f"  {resort['id']:<16} +{n:,} days")
-        except QuotaExhausted:
-            print(f"\n  {_resume_hint()}")
+        except QuotaExhausted as e:
+            print(f"\n  {_resume_hint(str(e))}")
             break
         except Exception as e:
             print(f"  {resort['id']:<16} FAILED: {e}")
