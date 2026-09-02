@@ -1,0 +1,75 @@
+{
+  "cervinia": {
+    "breuil-plan maison": "lift",
+    "buffalo": "review",
+    "cervinia": "review",
+    "chantorné": "review",
+    "col fenetre": "review",
+    "desert": "review",
+    "lago lod": "review",
+    "mongnod-chantorné": "review",
+    "teppa": "review",
+    "torgnon": "lift",
+    "valtournenche": "lift",
+    "zermatt": "review"
+  },
+  "courchevel": {
+    "Balou": "review",
+    "Golf 1850 n°1": "review",
+    "Golf 1850 n°2": "review",
+    "Grizzly": "review",
+    "Mine": "review",
+    "Mon Tania": "review",
+    "Némo": "review",
+    "Olaf": "review",
+    "Sheriff": "review",
+    "Tania": "review"
+  },
+  "la-plagne": {
+    "INDIENS": "review",
+    "PLAGNE 1800": "review",
+    "ROCHE": "review"
+  },
+  "lech-zuers": {
+    "Übungslift Flühen": "review"
+  },
+  "les-arcs": {
+    "1ERE GLISSE": "review",
+    "AZURE": "review"
+  },
+  "meribel": {
+    "Chatelet": "review",
+    "Loupiot": "review",
+    "Ourson": "review"
+  },
+  "saas-fee": {
+    "Allalin 2": "review",
+    "Allalin 3": "review",
+    "Allalin 4": "review",
+    "Allalin 4/5": "review",
+    "Allalin 5": "review",
+    "CUPRA Race - Cross": "review",
+    "CUPRA Race - Speed": "review",
+    "CUPRA Race: Speed": "review",
+    "Metro Alpin": "review",
+    "N Mittaghorn": "review",
+    "Spielboden": "review",
+    "Spielboden 1. Sektion": "review",
+    "Spielboden 2. Sektion": "review"
+  },
+  "st-anton": {
+    "Maienseelift I + II": "review"
+  },
+  "val-disere": {
+    "FUNIVAL": "lift"
+  },
+  "zermatt": {
+    "Furi - Schwarzsee": "review",
+    "Leisee-Shuttle": "review",
+    "Riffelalp - Riffelberg": "review",
+    "Riffelberg - Rotenboden": "review",
+    "Rotenboden - Gornergrat": "review",
+    "Schwarzsee - Furgg": "review",
+    "Zermatt - Riffelalp": "review"
+  }
+}
