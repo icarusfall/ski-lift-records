@@ -223,6 +223,46 @@ CREATE INDEX IF NOT EXISTS idx_climate_daily_date ON climate_daily (date);
 ALTER TABLE climate_daily ADD COLUMN IF NOT EXISTS wind_dir_dominant_deg SMALLINT;
 ALTER TABLE climate_daily ADD COLUMN IF NOT EXISTS cloud_cover_pct SMALLINT;
 
+-- Not everything a resort lists under "lifts" is a lift. Sites mix in sector
+-- status (a whole village or linked area), groomed routes, bike parks and
+-- children's play areas. Those rows carry readings like any other — and
+-- because a playground does not shut in a gale, they hold pct_lifts_open up
+-- on exactly the windy days this project exists to measure, damping the
+-- signal. `kind` decides what counts as a lift.
+--
+-- The default is 'lift': an unrecognised name must keep counting rather than
+-- silently vanish from the record (same lesson as the roster diff tool).
+ALTER TABLE lifts ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'lift';
+
+-- Physical type, from OSM where a way is matched. The closure-ordering model
+-- needs it: a magic carpet in a sheltered nursery slope and a high cable car
+-- fail at completely different wind speeds.
+ALTER TABLE lifts ADD COLUMN IF NOT EXISTS osm_type VARCHAR(40);
+
+-- The reading insert in store.py has always carried ON CONFLICT DO NOTHING, but
+-- there was no unique key for it to conflict on, so the guard never fired: every
+-- re-scrape of a snapshot appended another copy of every lift rather than being
+-- ignored. 6% of lift_readings (2,112 rows) were duplicates when this was found,
+-- La Plagne worst at 64 days with each lift stored three times. Per-lift stats
+-- count readings directly, so those days carried triple weight.
+--
+-- Adding the key is what makes the existing guard work. It cannot be applied
+-- while duplicates remain, so say so rather than failing a deploy.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conname = 'lift_readings_snapshot_lift_key') THEN
+        IF EXISTS (SELECT 1 FROM lift_readings
+                    GROUP BY snapshot_id, lift_id HAVING COUNT(*) > 1) THEN
+            RAISE NOTICE 'lift_readings still has duplicates - run: python -m scraper.db --dedupe';
+        ELSE
+            ALTER TABLE lift_readings
+                ADD CONSTRAINT lift_readings_snapshot_lift_key
+                UNIQUE (snapshot_id, lift_id);
+        END IF;
+    END IF;
+END $$;
+
 -- Lift geometry from OpenStreetMap: real positions, types and bearings.
 -- lift_id links a mapped way to a lift we actually observe; it stays NULL
 -- until a match is confident, since similar names are often different lifts.
@@ -358,3 +398,43 @@ def upsert_resort(resort: dict):
                 scraper_type = EXCLUDED.scraper_type,
                 notes = EXCLUDED.notes
         """, {**resort, "notes": resort.get("notes"), "primary_url": resort.get("primary_url")})
+
+
+def dedupe_lift_readings() -> int:
+    """Remove repeated readings of one lift within one snapshot.
+
+    Keeps the highest id in each group — the most recent write, so where a
+    re-scrape disagreed with the original the later observation survives.
+    Only 24 of the ~2,100 duplicate groups disagreed at all; the rest were
+    byte-identical copies.
+    """
+    with cursor() as cur:
+        cur.execute("""
+            DELETE FROM lift_readings a
+             USING lift_readings b
+             WHERE a.snapshot_id = b.snapshot_id
+               AND a.lift_id     = b.lift_id
+               AND a.id          < b.id
+        """)
+        return cur.rowcount
+
+
+def main():
+    import sys
+    args = sys.argv[1:]
+    if "--dedupe" in args:
+        removed = dedupe_lift_readings()
+        print(f"Removed {removed:,} duplicate lift reading(s).")
+        init_db()          # the unique key can be added once they are gone
+        return 0
+    if "--init" in args:
+        init_db()
+        return 0
+    print(__doc__)
+    print("  python -m scraper.db --init      apply schema and migrations")
+    print("  python -m scraper.db --dedupe    drop duplicate lift readings, then init")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
