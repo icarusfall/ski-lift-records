@@ -894,6 +894,7 @@ function renderPlan(host) {
 
 /* ---------- 35 years of climate ---------- */
 const CLIMATE_METRICS = {
+  snow_depth:  { label: "Snow depth at the summit",   unit: "cm",   dp: 0, better: "up" },
   freezing_m:  { label: "Freezing level (estimated)", unit: "m",    dp: 0, better: "down" },
   temp_mean:   { label: "Mean temperature",           unit: "°C",   dp: 1, better: "down" },
   temp_max:    { label: "Mean daily maximum",         unit: "°C",   dp: 1, better: "down" },
@@ -915,7 +916,7 @@ const CLIMATE_PRESETS = [
   ["Easter-ish",      "04-01", "04-08"],
 ];
 let CLIM = null, climLoading = false;
-let clim = { from: "02-14", to: "02-22", metric: "freezing_m", span: 8 };
+let clim = { from: "02-14", to: "02-22", metric: "snow_depth", span: 8 };
 
 function climKey() { return clim.from + "_" + clim.to; }
 function loadClimate() {
@@ -1018,10 +1019,21 @@ function renderClimate(host) {
       .filter(y => y[clim.metric] != null)
       .map(y => ({ x: y.season, y: Number(y[clim.metric]), n: y.n })),
   })).filter(s => s.pts.length > 4);
-  if (!series.length) {
-    host.appendChild(el("p", { class: "sub", text: "No data for that window." }));
-    return;
+  const dropped = picks
+    .filter(id => !series.some(s => s.id === id))
+    .map(id => CLIM.resorts[id].name);
+  if (dropped.length) {
+    host.appendChild(el("p", { class: "sub", style: "color:var(--s2);",
+      text: dropped.join(", ") + (dropped.length > 1 ? " have" : " has")
+          + " no usable " + M.label.toLowerCase() + " for this window."
+          + (clim.metric === "snow_depth"
+             ? " ERA5 models a permanently glaciated cell as carrying tens of metres of snow "
+               + "all year, so those seasons are withheld rather than plotted. It affects "
+               + "very few resorts — but Cervinia is one of them, which is a nuisance given "
+               + "it is the resort this whole project is about."
+             : "") }));
   }
+  if (!series.length) return;
 
   const lg = el("div", { class: "legend" });
   for (const s of series) {
@@ -1039,9 +1051,15 @@ function renderClimate(host) {
         + " °C/km lapse rate. Above the summit height means it was above freezing on top. "
       : "")
       + "One week of weather is a noisy thing, so a trend is only worth reading where the "
-      + "interval excludes zero — those are marked. ERA5's modelled snow depth is not offered "
-      + "here: it pins at 33 m over glaciers, which would make Cervinia look like it carries "
-      + "a 26-metre snowpack all year." }));
+      + "interval excludes zero — those are marked, and snow depth usually is not while "
+      + "freezing level usually is." }));
+  if (clim.metric === "snow_depth") host.appendChild(el("p", { class: "hint",
+    text: "This is ERA5's modelled snowpack at each resort's summit height, which is what "
+        + "35 years of reanalysis can give. It is not the upper and lower depths a resort "
+        + "reports on its own snow page — those are scraped into this project too, but only "
+        + "from February 2026 onwards, so they can answer what this season is doing and not "
+        + "what three decades did. They are in the Scatter lab as “Snow depth (mountain)” "
+        + "and “Snow depth (valley)”." }));
 }
 
 function climateChart(series, M) {

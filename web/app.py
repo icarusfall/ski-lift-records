@@ -424,6 +424,11 @@ def api_model():
 # not an observed snow line, and the page says so.
 LAPSE_C_PER_KM = 6.5
 
+# ERA5's modelled snow depth is credible up to a few metres at a summit but
+# runs away over permanently glaciated cells, pinning at 33.33 m. Anything
+# above this is the glacier, not the winter's snowpack.
+GLACIER_CEILING_M = 10.0
+
 
 @app.route("/api/climate.json")
 def api_climate():
@@ -453,11 +458,13 @@ def api_climate():
                    AVG(c.temp_max_c)  AS temp_max,
                    AVG(c.temp_min_c)  AS temp_min,
                    SUM(c.snowfall_cm) AS snowfall,
-                   -- snow_depth_model_m is deliberately not offered. ERA5's
-                   -- modelled depth pins at exactly 33.33 m over glaciated
-                   -- cells, so Cervinia reads a constant 26 m average. It is a
-                   -- permanent-ice artefact, not a snowpack. Fresh snowfall is
-                   -- the real variable here.
+                   AVG(c.snow_depth_model_m) AS snow_depth,
+                   -- ERA5's modelled depth is sound for 35 of 36 resorts
+                   -- (0.2-4.5 m at the summit) but saturates at 33.33 m over
+                   -- permanently glaciated cells, which is why Cervinia averages
+                   -- 26 m. The maximum is carried so a season sitting on the
+                   -- ceiling can be dropped rather than plotted as a snowpack.
+                   MAX(c.snow_depth_model_m) AS snow_depth_max,
                    SUM(c.precipitation_mm)   AS precip,
                    AVG(c.sunshine_hours)     AS sunshine,
                    AVG(c.wind_gust_max_kmh)  AS gust,
@@ -490,6 +497,10 @@ def api_climate():
             "temp_max": round(float(r["temp_max"]), 2),
             "temp_min": round(float(r["temp_min"]), 2),
             "snowfall": round(float(r["snowfall"]), 1),
+            # Null rather than a number where the cell is glaciated: a wrong
+            # value plotted confidently is worse than a gap in the line.
+            "snow_depth": (None if float(r["snow_depth_max"]) >= GLACIER_CEILING_M
+                           else round(float(r["snow_depth"]) * 100, 1)),
             "precip": round(float(r["precip"]), 1),
             "sunshine": round(float(r["sunshine"]), 2),
             "gust": round(float(r["gust"]), 1),
