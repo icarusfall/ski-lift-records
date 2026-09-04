@@ -159,6 +159,13 @@
   map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "top-right");
   map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }));
 
+  // Deliberate debug handle. This page can only be checked against a live
+  // Mapbox token, which is restricted to the production domain, so there is no
+  // local preview to poke at — and everything here lives inside a closure.
+  // Being able to type `skiMap.getPitch()` in a console is the difference
+  // between diagnosing this map and guessing at it.
+  window.skiMap = map;
+
   var popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
 
   // A map that fails should say so rather than sit as a blank rectangle.
