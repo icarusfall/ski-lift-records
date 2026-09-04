@@ -87,9 +87,16 @@ def _offset(lat: float, lon: float, bearing_deg: float, dist_m: float):
     return lat + dlat, lon + dlon
 
 
-def horizon_profile(lat: float, lon: float, observer_m: float | None = None) -> list[float] | None:
-    """Angle to the highest terrain in each compass direction, in degrees."""
-    h0 = observer_m if observer_m is not None else elevation(lat, lon)
+def horizon_profile(lat: float, lon: float, observer_m: float | None = None,
+                    elev_fn=None) -> list[float] | None:
+    """Angle to the highest terrain in each compass direction, in degrees.
+
+    `elev_fn` lets this run against a stored terrain patch instead of the local
+    SRTM tiles, which is how the deployed app answers for a point someone has
+    just clicked — production has no tiles.
+    """
+    elev_fn = elev_fn or elevation
+    h0 = observer_m if observer_m is not None else elev_fn(lat, lon)
     if h0 is None:
         return None
     # Stand a person on the ground rather than in it.
@@ -100,7 +107,7 @@ def horizon_profile(lat: float, lon: float, observer_m: float | None = None) -> 
         best = 0.0
         for d in RAY:
             p_lat, p_lon = _offset(lat, lon, bearing, d)
-            h = elevation(p_lat, p_lon)
+            h = elev_fn(p_lat, p_lon)
             if h is None:
                 continue
             # Curvature drops distant ground away; refraction lifts it back a

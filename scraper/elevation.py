@@ -8,6 +8,7 @@ station" is a horizon calculation that needs terrain in every direction.
     python -m scraper.elevation --tiles       # which DEM tiles are needed
     python -m scraper.elevation --download    # fetch them once, then cache
     python -m scraper.elevation --lifts       # elevations per lift vertex
+    python -m scraper.elevation --patches     # compact per-resort terrain for production
     python -m scraper.elevation --status
 
 Source: SRTM 1-arcsec (30 m) via the AWS Open Data terrain tiles bucket. That
@@ -153,6 +154,94 @@ def elevation(lat: float, lon: float) -> float | None:
     return top * (1 - dy) + bottom * dy
 
 
+# ---- compact patches, so production can do this without the tiles ---------
+# The deployed app has no DEM: `data/dem/` is 284 MB and gitignored. These
+# patches carry just enough terrain per resort to answer "when does this exact
+# spot lose the sun", which is a question about somewhere inside the ski area.
+NEAR_PAD_DEG, NEAR_ARCSEC = 0.08, 1     # ~9 km box at full resolution
+FAR_PAD_DEG, FAR_ARCSEC = 0.30, 6       # ~33 km box, coarse, for far ridges
+
+
+def _grid(lat_c: float, lon_c: float, pad: float, arcsec: int) -> tuple:
+    """A square of elevations around a point, north row first."""
+    step = arcsec / 3600.0
+    size = int(2 * pad / step) + 1
+    north, west = lat_c + pad, lon_c - pad
+    out = bytearray()
+    for r in range(size):
+        lat = north - r * step
+        for c in range(size):
+            v = elevation(lat, west + c * step)
+            # Sea-level rather than a void marker: these boxes sit in the Alps,
+            # so a miss means a tile edge, and 0 is less wrong than -32768.
+            out += struct.pack(">h", int(round(v)) if v is not None else 0)
+    return north, west, arcsec, size, bytes(out)
+
+
+def patches(resort_filter: str | None = None) -> int:
+    resorts = [r for r in load_resorts()
+               if r.get("latitude") and (not resort_filter or r["id"] == resort_filter)]
+    if not resorts:
+        print(f"\n  No resort matching '{resort_filter}'.\n")
+        return 1
+    print(f"\n  Building terrain patches for {len(resorts)} resort(s)…\n")
+    total = 0
+    for r in resorts:
+        near = _grid(r["latitude"], r["longitude"], NEAR_PAD_DEG, NEAR_ARCSEC)
+        far = _grid(r["latitude"], r["longitude"], FAR_PAD_DEG, FAR_ARCSEC)
+        with cursor() as cur:
+            cur.execute("""
+                INSERT INTO dem_patches
+                    (resort_id, near_north, near_west, near_arcsec, near_size, near_grid,
+                     far_north, far_west, far_arcsec, far_size, far_grid)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (resort_id) DO UPDATE SET
+                    near_north = EXCLUDED.near_north, near_west = EXCLUDED.near_west,
+                    near_arcsec = EXCLUDED.near_arcsec, near_size = EXCLUDED.near_size,
+                    near_grid = EXCLUDED.near_grid,
+                    far_north = EXCLUDED.far_north, far_west = EXCLUDED.far_west,
+                    far_arcsec = EXCLUDED.far_arcsec, far_size = EXCLUDED.far_size,
+                    far_grid = EXCLUDED.far_grid, built_at = NOW()
+            """, (r["id"], round(near[0], 6), round(near[1], 6), near[2], near[3],
+                  near[4], round(far[0], 6), round(far[1], 6), far[2], far[3], far[4]))
+        mb = (len(near[4]) + len(far[4])) / 1e6
+        total += mb
+        print(f"  {r['id']:<18}{near[3]}² near + {far[3]}² far   {mb:.2f} MB")
+    print(f"\n  {total:.0f} MB stored across {len(resorts)} resort(s).\n")
+    return 0
+
+
+def patch_sampler(patch: dict):
+    """An `elevation(lat, lon)`-shaped function backed by a stored patch."""
+    def sample(grid, north, west, arcsec, size, lat, lon):
+        step = arcsec / 3600.0
+        y = (north - lat) / step
+        x = (lon - west) / step
+        if not (0 <= y <= size - 1 and 0 <= x <= size - 1):
+            return None
+        r0, c0 = int(y), int(x)
+        dy, dx = y - r0, x - c0
+        def at(r, c):
+            r = min(max(r, 0), size - 1)
+            c = min(max(c, 0), size - 1)
+            return struct.unpack_from(">h", grid, (r * size + c) * 2)[0]
+        top = at(r0, c0) * (1 - dx) + at(r0, c0 + 1) * dx
+        bot = at(r0 + 1, c0) * (1 - dx) + at(r0 + 1, c0 + 1) * dx
+        return top * (1 - dy) + bot * dy
+
+    near = (bytes(patch["near_grid"]), float(patch["near_north"]),
+            float(patch["near_west"]), patch["near_arcsec"], patch["near_size"])
+    far = (bytes(patch["far_grid"]), float(patch["far_north"]),
+           float(patch["far_west"]), patch["far_arcsec"], patch["far_size"])
+
+    def elev(lat, lon):
+        # Fine grid where we have it, coarse beyond — a distant ridge only
+        # needs to be in roughly the right place to block the sun.
+        v = sample(*near, lat, lon)
+        return v if v is not None else sample(*far, lat, lon)
+    return elev
+
+
 def lifts() -> int:
     """Store an elevation per vertex on every lift geometry."""
     with cursor() as cur:
@@ -221,6 +310,10 @@ def main():
         return download(force="--force" in args)
     if "--lifts" in args:
         return lifts()
+    if "--patches" in args:
+        i = args.index("--patches")
+        target = args[i + 1] if len(args) > i + 1 and not args[i + 1].startswith("-") else None
+        return patches(target)
     if "--status" in args:
         return status()
     print(__doc__)

@@ -716,6 +716,63 @@ def api_sun(resort_id: str):
     return resp
 
 
+_PATCHES = {}
+
+
+@app.route("/api/sun-at.json")
+def api_sun_at():
+    """Sun times for one arbitrary point — wherever someone clicked.
+
+    Computed on demand rather than looked up, because the interesting spots are
+    restaurants and bars, not lift stations. It runs against the resort's stored
+    terrain patch: the deployed app has no DEM tiles, and a profile from the
+    patch takes about 20 ms and matches one from the full 30 m tiles to a
+    hundredth of a degree on average.
+    """
+    from scraper import sun as sunmod
+    from scraper.elevation import patch_sampler
+
+    resort_id = (request.args.get("resort") or "").strip()
+    try:
+        lat = float(request.args["lat"])
+        lon = float(request.args["lon"])
+    except (KeyError, ValueError):
+        return jsonify({"error": "lat and lon are required"}), 400
+    raw = (request.args.get("date") or "").strip()
+    try:
+        day = date.fromisoformat(raw) if raw else date(date.today().year, 2, 14)
+    except ValueError:
+        day = date(date.today().year, 2, 14)
+
+    if resort_id not in _PATCHES:
+        with cursor() as cur:
+            cur.execute("SELECT * FROM dem_patches WHERE resort_id = %s", (resort_id,))
+            row = cur.fetchone()
+        # Each patch is ~0.9 MB resident and there are 36 of them, per worker.
+        # Nobody pans between more than a couple of resorts in a sitting, so a
+        # small cache keeps this bounded without ever being felt.
+        if len(_PATCHES) >= 4:
+            _PATCHES.clear()
+        _PATCHES[resort_id] = patch_sampler(dict(row)) if row else None
+    sampler = _PATCHES[resort_id]
+    if sampler is None:
+        return jsonify({"error": "no terrain patch for this resort"}), 404
+
+    ground = sampler(lat, lon)
+    if ground is None:
+        return jsonify({"error": "outside the terrain patch"}), 422
+    prof = sunmod.horizon_profile(lat, lon, elev_fn=sampler)
+    if prof is None:
+        return jsonify({"error": "could not read the terrain here"}), 422
+
+    w = sunmod.sun_windows(lat, lon, prof, day)
+    resp = jsonify({"resort_id": resort_id, "date": day.isoformat(),
+                    "lat": lat, "lon": lon, "elevation_m": round(ground),
+                    "horizon": prof, "azimuth_step": sunmod.AZIMUTH_STEP, **w})
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
 @app.route("/api/outlook.json")
 def api_outlook():
     """Expected conditions for a calendar window, per resort.

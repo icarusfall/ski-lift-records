@@ -399,6 +399,27 @@ CREATE TABLE IF NOT EXISTS sun_points (
     UNIQUE (resort_id, latitude, longitude)
 );
 CREATE INDEX IF NOT EXISTS idx_sun_points_resort ON sun_points (resort_id);
+
+-- A compact terrain patch per resort, so the deployed app can work out the sun
+-- at an arbitrary point without carrying the 284 MB of SRTM tiles the ingest
+-- runs from. Two tiers: full 1-arcsec detail near the resort, where anyone will
+-- actually click, and 6-arcsec out to 0.3 degrees for the distant ridges that
+-- still block a low winter sun. About 0.9 MB per resort.
+-- Grids are big-endian int16, row 0 at the NORTH edge, like the source tiles.
+CREATE TABLE IF NOT EXISTS dem_patches (
+    resort_id   VARCHAR(50) PRIMARY KEY REFERENCES resorts(id),
+    near_north  NUMERIC(9,6) NOT NULL,
+    near_west   NUMERIC(9,6) NOT NULL,
+    near_arcsec SMALLINT NOT NULL,
+    near_size   SMALLINT NOT NULL,
+    near_grid   BYTEA NOT NULL,
+    far_north   NUMERIC(9,6) NOT NULL,
+    far_west    NUMERIC(9,6) NOT NULL,
+    far_arcsec  SMALLINT NOT NULL,
+    far_size    SMALLINT NOT NULL,
+    far_grid    BYTEA NOT NULL,
+    built_at    TIMESTAMP DEFAULT NOW()
+);
 """
 
 

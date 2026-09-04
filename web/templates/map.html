@@ -44,6 +44,10 @@
            cursor: pointer; font-family: inherit; }
   button:hover { border-color: var(--baseline); color: var(--ink); }
   button.on { border-color: #2b6cb0; color: #2b6cb0; font-weight: 600; }
+  input[type="date"] { border: 1px solid var(--grid); border-radius: 5px;
+                       padding: 0.15rem 0.3rem; font-size: 0.8rem; color: var(--ink);
+                       font-family: inherit; }
+  #map.picking { cursor: crosshair; }
   .warn { padding: 1.5rem; font-size: 0.9rem; color: var(--ink-2); }
   .warn code { background: var(--grid); padding: 0 4px; border-radius: 3px; }
 </style>
@@ -112,6 +116,17 @@
       <option value="record">What actually happened</option>
       <option value="predict">What the model predicts</option>
     </select>
+  </div>
+  <div>
+    <label for="sunmode">Sun</label>
+    <select id="sunmode">
+      <option value="off">Off</option>
+      <option value="on">Click anywhere for sun times</option>
+    </select>
+  </div>
+  <div id="sunBox" style="display:none;">
+    <label for="sundate">Date</label>
+    <input type="date" id="sundate" value="2027-02-14">
   </div>
   <div id="windBox" style="display:none;">
     <label for="wind">Gust</label>
@@ -294,6 +309,73 @@
     } catch (e) {
       console.warn("elevated cables unavailable:", e && e.message);
     }
+  }
+
+  // ---- sun at a point --------------------------------------------------
+  // Click anywhere — a restaurant, a terrace, a chairlift queue — and get the
+  // hours of sun there on the chosen date. The horizon is worked out on the
+  // server from that resort's terrain patch, so this is not limited to the
+  // lift stations that have a stored profile.
+  var sunPopup = new mapboxgl.Popup({ closeButton: true, maxWidth: "320px" });
+
+  function sunModeOn() {
+    return document.getElementById("sunmode").value === "on";
+  }
+
+  function applySunMode() {
+    var on = sunModeOn();
+    document.getElementById("sunBox").style.display = on ? "" : "none";
+    document.getElementById("map").classList.toggle("picking", on);
+    if (!on) sunPopup.remove();
+  }
+
+  function sunBar(w) {
+    // A day-long strip with the lit stretch marked, so the answer reads at a
+    // glance before anyone parses the times.
+    if (!w.first || !w.last) return "";
+    var toH = function (t) { var p = t.split(":"); return +p[0] + p[1] / 60; };
+    var a = (toH(w.first) - 6) / 15 * 100, b = (toH(w.last) - 6) / 15 * 100;
+    a = Math.max(0, Math.min(100, a)); b = Math.max(0, Math.min(100, b));
+    return '<div style="position:relative;height:8px;border-radius:4px;'
+         + 'background:#e1e0d9;margin:6px 0 2px;">'
+         + '<div style="position:absolute;left:' + a.toFixed(1) + '%;width:'
+         + Math.max(1, b - a).toFixed(1) + '%;top:0;bottom:0;border-radius:4px;'
+         + 'background:#eda100;"></div></div>'
+         + '<div style="display:flex;justify-content:space-between;'
+         + 'font-size:0.62rem;color:#898781;"><span>06:00</span>'
+         + '<span>13:30</span><span>21:00</span></div>';
+  }
+
+  function askSun(lngLat) {
+    var rid = document.getElementById("resort").value;
+    var day = document.getElementById("sundate").value;
+    sunPopup.setLngLat(lngLat)
+      .setHTML("<h3>Working out the skyline…</h3>")
+      .addTo(map);
+    fetch("/api/sun-at.json?resort=" + rid + "&lat=" + lngLat.lat.toFixed(5)
+          + "&lon=" + lngLat.lng.toFixed(5) + "&date=" + day)
+      .then(function (r) { return r.json().then(function (d) { d._status = r.status; return d; }); })
+      .then(function (d) {
+        if (d.error) { sunPopup.setHTML("<h3>No answer here</h3><div>" + d.error + "</div>"); return; }
+        var lost = null;
+        if (d.flat_first && d.flat_last) {
+          var toH = function (t) { var p = t.split(":"); return +p[0] + p[1] / 60; };
+          lost = (toH(d.flat_last) - toH(d.flat_first)) - d.hours;
+        }
+        var rows = "<tr><td>Sun</td><td>" + (d.first ? d.first + " – " + d.last : "none all day") + "</td></tr>"
+          + "<tr><td>Hours</td><td>" + d.hours.toFixed(1) + "</td></tr>"
+          + "<tr><td>Ground</td><td>" + d.elevation_m + " m</td></tr>"
+          + (lost != null ? "<tr><td>Lost to terrain</td><td>" + lost.toFixed(1) + " h</td></tr>" : "")
+          + (d.windows > 1 ? "<tr><td>Windows</td><td>" + d.windows + "</td></tr>" : "");
+        sunPopup.setHTML("<h3>Sun on " + d.date + "</h3>" + sunBar(d)
+          + "<table>" + rows + "</table>"
+          + '<div style="font-size:0.66rem;color:#898781;margin-top:4px;">'
+          + "With no mountains it would be " + (d.flat_first || "?") + " – "
+          + (d.flat_last || "?") + ".</div>");
+      })
+      .catch(function (e) {
+        sunPopup.setHTML("<h3>Could not reach the server</h3><div>" + e.message + "</div>");
+      });
   }
 
   // ---- pistes ----------------------------------------------------------
@@ -654,6 +736,14 @@
     load(e.target.value);
   });
   document.getElementById("pistes").addEventListener("change", applyPistes);
+  document.getElementById("sunmode").addEventListener("change", applySunMode);
+  document.getElementById("sundate").addEventListener("change", function () {
+    // Re-answer where the popup already is, rather than making them click again.
+    if (sunPopup.isOpen()) askSun(sunPopup.getLngLat());
+  });
+  // Bound once on the map, not on a layer: the whole point is being able to
+  // click a restaurant symbol or a bare patch of hillside, not just a lift.
+  map.on("click", function (e) { if (sunModeOn()) askSun(e.lngLat); });
   document.getElementById("mode").addEventListener("change", applyColours);
   var windEl = document.getElementById("wind");
   function setWind(v) {
