@@ -73,18 +73,22 @@
   <div>
     <label for="terrain">Terrain</label>
     <select id="terrain">
-      <option value="1.4">3D</option>
-      <option value="2.2">3D, exaggerated</option>
+      <!-- Ordered by how much relief there is. `selected` keeps 3D as the
+           default now that it is no longer the first option. -->
       <option value="0">Flat</option>
+      <option value="1.4" selected>3D</option>
+      <option value="2.2">3D, exaggerated</option>
     </select>
   </div>
   <div>
     <label for="look">Look</label>
     <select id="look">
       <option value="outdoors">Outdoors — contours &amp; trails</option>
+      <!-- The four Standard presets run through the day in order. They were
+           day, dusk, dawn, night, which put dawn after dusk. -->
+      <option value="dawn">Standard — dawn</option>
       <option value="day">Standard — day</option>
       <option value="dusk">Standard — dusk</option>
-      <option value="dawn">Standard — dawn</option>
       <option value="night">Standard — night</option>
     </select>
   </div>

@@ -183,10 +183,10 @@ let leagueSort = { key: "avg", asc: true };
 const METRICS = {
   pct:   { label: "% lifts open", unit: "%",    get: r => r.error ? null : r.pct,      dom: [0,100] },
   lifts: { label: "Lifts open",   unit: "",     get: r => r.error ? null : r.lifts_open, dom: null },
-  snowm: { label: "Snow depth (mountain)", unit: "cm", get: r => r.snow_mtn,  dom: null },
-  fresh: { label: "Fresh snow",   unit: "cm",   get: r => r.fresh,  dom: null },
   pctMin:{ label: "% lifts open (worst of day)", unit: "%",
            get: r => r.error ? null : r.pctMin, dom: [0,100] },
+  snowm: { label: "Snow depth (mountain)", unit: "cm", get: r => r.snow_mtn,  dom: null },
+  fresh: { label: "Fresh snow",   unit: "cm",   get: r => r.fresh,  dom: null },
   gust:  { label: "Max wind gust", unit: "km/h", get: r => r.gust,  dom: null },
   w700:  { label: "Summit wind (700hPa)", unit: "km/h", get: r => r.w700, dom: null },
   tmin:  { label: "Min temp",     unit: "°C",   get: r => r.tmin,   dom: null },
@@ -287,6 +287,12 @@ async function load() {
     if (!byResort.has(r.id)) byResort.set(r.id, new Map());
     byResort.get(r.id).set(r.date, r);
   }
+
+  // The API returns resorts grouped by country and area, which is the right
+  // order for the dashboard because it prints those headings. Nothing here
+  // shows them, so the grouping was invisible and the list looked arbitrary.
+  // Alphabetical by the name actually on screen.
+  RESORTS.sort((a, b) => a.name.localeCompare(b.name));
 
   // default range: the season with the most data
   const bySeason = new Map();
@@ -673,7 +679,13 @@ function renderWind(host) {
 let liftPick = null;
 function renderLifts(host) {
   host.appendChild(el("h2", { text: "Lift reliability" }));
-  const withLifts = [...new Set(LIFTS.map(l => l.resort_id))];
+  // Sorted by the name shown, not the id behind it: ordering by id put
+  // Breuil-Cervinia under "c" in a list that displays "B".
+  const withLifts = [...new Set(LIFTS.map(l => l.resort_id))].sort((a, b) => {
+    const na = (LIFTS.find(l => l.resort_id === a) || {}).resort_name || a;
+    const nb = (LIFTS.find(l => l.resort_id === b) || {}).resort_name || b;
+    return na.localeCompare(nb);
+  });
   if (!withLifts.length) { host.appendChild(el("p", { class: "sub", text: "No per-lift data yet." })); return; }
   if (!liftPick || !withLifts.includes(liftPick)) liftPick = withLifts.includes("cervinia") ? "cervinia" : withLifts[0];
 
@@ -1827,8 +1839,10 @@ function renderModel(host) {
                  el("p", { class: "sub", text: "Could not load the model: " + e.message })); });
     return;
   }
+  // Alphabetical to choose from; the table further down still ranks by
+  // scalability, which is the ordering that carries meaning.
   const ids = Object.keys(MODEL.resorts)
-    .sort((a, b) => MODEL.resorts[b].fit.cs - MODEL.resorts[a].fit.cs);
+    .sort((a, b) => MODEL.resorts[a].name.localeCompare(MODEL.resorts[b].name));
   if (!ids.length) { host.appendChild(el("p", { class: "sub",
     text: "No resort has enough per-lift readings yet." })); return; }
   if (!ids.includes(modelResort)) modelResort = ids.includes("cervinia") ? "cervinia" : ids[0];
