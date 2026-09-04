@@ -316,6 +316,47 @@ CREATE TABLE IF NOT EXISTS climate_indices (
     value       NUMERIC(6,2),
     PRIMARY KEY (index_name, year, month)
 );
+
+-- Measured snow depth from Alpine weather stations (Matiu et al. 2021), as a
+-- check on the modelled climate_daily.snow_depth_model_m above. `Name` is
+-- unique across the whole dataset by construction, so it serves as the key.
+CREATE TABLE IF NOT EXISTS snow_stations (
+    id            VARCHAR(120) PRIMARY KEY,
+    provider      VARCHAR(24) NOT NULL,
+    country       CHAR(2),
+    latitude      NUMERIC(9,6),
+    longitude     NUMERIC(9,6),
+    elevation_m   INTEGER,
+    hs_year_start SMALLINT,
+    hs_year_end   SMALLINT,
+    -- Austria and Switzerland licensed monthly means only; France and Italy
+    -- published daily. A station is one or the other, never both.
+    cadence       VARCHAR(8) NOT NULL
+);
+
+-- Candidate stations per resort, ranked. Never collapsed to a single
+-- automatic answer: a station 12 km away and 1,900 m below the summit is not
+-- this resort's snow, and only a human can say so.
+CREATE TABLE IF NOT EXISTS resort_stations (
+    resort_id   VARCHAR(50) NOT NULL REFERENCES resorts(id),
+    station_id  VARCHAR(120) NOT NULL REFERENCES snow_stations(id),
+    rank        SMALLINT NOT NULL,
+    distance_km NUMERIC(6,2),
+    elev_diff_m INTEGER,
+    chosen      BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (resort_id, station_id)
+);
+
+CREATE TABLE IF NOT EXISTS station_snow (
+    station_id   VARCHAR(120) NOT NULL REFERENCES snow_stations(id),
+    -- First of the month for monthly-cadence stations.
+    date         DATE NOT NULL,
+    hs_cm        NUMERIC(6,1),   -- quality-checked, never imputed
+    hs_filled_cm NUMERIC(6,1),   -- gap-filled variant, for trends over gaps
+    hn_cm        NUMERIC(6,1),   -- depth of new snowfall
+    PRIMARY KEY (station_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_station_snow_date ON station_snow (date);
 """
 
 
