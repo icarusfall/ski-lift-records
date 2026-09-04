@@ -418,6 +418,96 @@ def api_model():
     return resp
 
 
+# Environmental lapse rate. ERA5 was fetched with elevation set to each
+# resort's summit, so the temperature has a known reference height and the
+# 0 °C line can be placed relative to it. This is an estimate from temperature,
+# not an observed snow line, and the page says so.
+LAPSE_C_PER_KM = 6.5
+
+
+@app.route("/api/climate.json")
+def api_climate():
+    """One calendar window, every resort, every season since 1991.
+
+    Aggregated in the database rather than shipped raw: the table is 468,900
+    rows and the question only ever concerns a week or two of them.
+    """
+    def _md(v, fallback):
+        v = (v or "").strip()
+        return v if re.fullmatch(r"\d{2}-\d{2}", v) else fallback
+
+    start = _md(request.args.get("from"), "02-14")
+    end = _md(request.args.get("to"), "02-22")
+    # A window may wrap the new year (Christmas into January), so the two cases
+    # differ; seasons are labelled by the year the season started either way.
+    window = ("TO_CHAR(date, 'MM-DD') BETWEEN %(a)s AND %(b)s" if start <= end
+              else "(TO_CHAR(date, 'MM-DD') >= %(a)s OR TO_CHAR(date, 'MM-DD') <= %(b)s)")
+    with cursor() as cur:
+        cur.execute(f"""
+            SELECT c.resort_id,
+                   (EXTRACT(YEAR FROM c.date)
+                    - CASE WHEN EXTRACT(MONTH FROM c.date) >= 8 THEN 0 ELSE 1 END)::int
+                       AS season,
+                   COUNT(*) AS n,
+                   AVG(c.temp_mean_c) AS temp_mean,
+                   AVG(c.temp_max_c)  AS temp_max,
+                   AVG(c.temp_min_c)  AS temp_min,
+                   SUM(c.snowfall_cm) AS snowfall,
+                   -- snow_depth_model_m is deliberately not offered. ERA5's
+                   -- modelled depth pins at exactly 33.33 m over glaciated
+                   -- cells, so Cervinia reads a constant 26 m average. It is a
+                   -- permanent-ice artefact, not a snowpack. Fresh snowfall is
+                   -- the real variable here.
+                   SUM(c.precipitation_mm)   AS precip,
+                   AVG(c.sunshine_hours)     AS sunshine,
+                   AVG(c.wind_gust_max_kmh)  AS gust,
+                   AVG(c.cloud_cover_pct)    AS cloud
+            FROM climate_daily c
+            WHERE {window}
+            GROUP BY c.resort_id, season
+            ORDER BY c.resort_id, season
+        """, {"a": start, "b": end})
+        rows = cur.fetchall()
+
+    with cursor() as cur:
+        cur.execute("SELECT id, name, country, area, top_altitude_m FROM resorts")
+        meta = {r["id"]: r for r in cur.fetchall()}
+
+    out = {}
+    for r in rows:
+        m = meta.get(r["resort_id"])
+        if not m:
+            continue
+        block = out.setdefault(r["resort_id"], {
+            "name": m["name"], "country": m["country"], "area": m["area"],
+            "top_m": m["top_altitude_m"], "years": [],
+        })
+        t = float(r["temp_mean"])
+        top = m["top_altitude_m"]
+        block["years"].append({
+            "season": r["season"], "n": r["n"],
+            "temp_mean": round(t, 2),
+            "temp_max": round(float(r["temp_max"]), 2),
+            "temp_min": round(float(r["temp_min"]), 2),
+            "snowfall": round(float(r["snowfall"]), 1),
+            "precip": round(float(r["precip"]), 1),
+            "sunshine": round(float(r["sunshine"]), 2),
+            "gust": round(float(r["gust"]), 1),
+            "cloud": round(float(r["cloud"]), 1),
+            # Height of the 0 °C line, from the summit temperature and a
+            # standard lapse rate. Above the summit means it rained on top.
+            "freezing_m": round(top + t / LAPSE_C_PER_KM * 1000) if top else None,
+        })
+
+    resp = jsonify({
+        "window": {"from": start, "to": end},
+        "lapse_c_per_km": LAPSE_C_PER_KM,
+        "resorts": out,
+    })
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
 @app.route("/api/outlook.json")
 def api_outlook():
     """Expected conditions for a calendar window, per resort.

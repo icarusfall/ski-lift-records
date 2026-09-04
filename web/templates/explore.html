@@ -197,7 +197,7 @@ const METRICS = {
 const TABS = [
   ["heatmap", "Season heatmap"], ["compare", "Compare"], ["wind", "Wind vs open"],
   ["lifts", "Lift reliability"], ["league", "League table"], ["plan", "Plan a trip"],
-  ["scatter", "Scatter lab"], ["model", "How it works"],
+  ["scatter", "Scatter lab"], ["climate", "35 years"], ["model", "How it works"],
 ];
 
 /* ---------- utilities ---------- */
@@ -350,7 +350,8 @@ function buildChips() {
   }
   $("#selHint").textContent = selection.length >= 8
     ? "Up to 8 resorts can be compared at once — deselect one to add another."
-    : "Resort selection applies to the Compare and Wind views (Wind uses the first 3).";
+    : "Resort selection drives the Compare, Wind and 35 years views "
+      + "(Wind uses the first 3, 35 years the first 6).";
 }
 function toggleResort(id) {
   if (selection.includes(id)) {
@@ -889,6 +890,252 @@ function renderPlan(host) {
         + (data.resorts[0].climate_years || 35) + " years whose window contained three consecutive "
         + "days with gusts over 60 km/h. THIN marks resorts whose observed response still rests on "
         + "few days." }));
+}
+
+/* ---------- 35 years of climate ---------- */
+const CLIMATE_METRICS = {
+  freezing_m:  { label: "Freezing level (estimated)", unit: "m",    dp: 0, better: "down" },
+  temp_mean:   { label: "Mean temperature",           unit: "°C",   dp: 1, better: "down" },
+  temp_max:    { label: "Mean daily maximum",         unit: "°C",   dp: 1, better: "down" },
+  temp_min:    { label: "Mean daily minimum",         unit: "°C",   dp: 1, better: "down" },
+  snowfall:    { label: "Total snowfall",             unit: "cm",   dp: 0, better: "up" },
+  precip:      { label: "Total precipitation",        unit: "mm",   dp: 0, better: null },
+  sunshine:    { label: "Sunshine per day",           unit: "h",    dp: 1, better: "up" },
+  gust:        { label: "Mean daily max gust",        unit: "km/h", dp: 0, better: "down" },
+  cloud:       { label: "Cloud cover",                unit: "%",    dp: 0, better: "down" },
+};
+/* Named windows people actually book, plus every week of the season. */
+const CLIMATE_PRESETS = [
+  ["Christmas",       "12-20", "12-27"],
+  ["New Year",        "12-28", "01-04"],
+  ["Mid-January",     "01-10", "01-17"],
+  ["Feb half-term",   "02-14", "02-22"],
+  ["Late February",   "02-23", "03-02"],
+  ["Mid-March",       "03-10", "03-17"],
+  ["Easter-ish",      "04-01", "04-08"],
+];
+let CLIM = null, climLoading = false;
+let clim = { from: "02-14", to: "02-22", metric: "freezing_m", span: 8 };
+
+function climKey() { return clim.from + "_" + clim.to; }
+function loadClimate() {
+  if (climLoading) return;
+  climLoading = true;
+  fetch(`/api/climate.json?from=${clim.from}&to=${clim.to}`)
+    .then(r => r.json())
+    .then(d => { CLIM = d; climLoading = false; render(); })
+    .catch(e => { climLoading = false; CLIM = { error: e.message }; render(); });
+}
+const seasonLabel = y => y + "/" + String((y + 1) % 100).padStart(2, "0");
+function mdLabel(md) {
+  const [m, d] = md.split("-").map(Number);
+  return d + " " + MONTHS[m - 1];
+}
+/* Least squares plus a rough 95% interval. With ~36 points and one week of
+   weather per point the interval is usually wide, and saying so is the
+   difference between a finding and a decoration. */
+function trend(pts) {
+  const n = pts.length;
+  if (n < 6) return null;
+  const mx = pts.reduce((a, p) => a + p.x, 0) / n;
+  const my = pts.reduce((a, p) => a + p.y, 0) / n;
+  let sxx = 0, sxy = 0;
+  for (const p of pts) { sxx += (p.x - mx) ** 2; sxy += (p.x - mx) * (p.y - my); }
+  if (!sxx) return null;
+  const slope = sxy / sxx, intercept = my - slope * mx;
+  let ss = 0;
+  for (const p of pts) ss += (p.y - (slope * p.x + intercept)) ** 2;
+  const se = Math.sqrt((ss / (n - 2)) / sxx);
+  const half = 2.03 * se;                 // t(0.975) at ~34 d.f.
+  return { slope, intercept, se, lo: slope - half, hi: slope + half, n,
+           significant: (slope - half) * (slope + half) > 0 };
+}
+
+function renderClimate(host) {
+  host.appendChild(el("h2", { text: "35 years of this week" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Pick the week you would go and watch it change. Every point is one season's "
+        + "average over that calendar window, from the ERA5 reanalysis, 1991 to 2026 — the "
+        + "same record the trip planner uses for how often bad weather turns up." }));
+
+  const ctl = el("div", { class: "controls", style: "margin-bottom:0.5rem;" });
+  const presets = el("div", { class: "group" }, el("label", { text: "Week:" }));
+  for (const [name, a, b] of CLIMATE_PRESETS) {
+    const on = clim.from === a && clim.to === b;
+    presets.appendChild(el("button", { class: "preset" + (on ? " active" : ""), text: name,
+      onclick: () => { clim.from = a; clim.to = b; CLIM = null; render(); } }));
+  }
+  ctl.appendChild(presets);
+  const mk = (which) => {
+    const s = el("select", { onchange: e => { clim[which] = e.target.value; CLIM = null; render(); } });
+    for (let m = 11; m <= 16; m++) {
+      const mm = ((m - 1) % 12) + 1;
+      for (let day = 1; day <= 28; day += 1) {
+        const v = String(mm).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+        const o = el("option", { value: v, text: mdLabel(v) });
+        if (clim[which] === v) o.setAttribute("selected", "");
+        s.appendChild(o);
+      }
+    }
+    return s;
+  };
+  ctl.appendChild(el("div", { class: "group" }, el("label", { text: "From:" }), mk("from"),
+    el("label", { text: "to:" }), mk("to")));
+  const ms = el("select", { onchange: e => { clim.metric = e.target.value; render(); } });
+  for (const [k, v] of Object.entries(CLIMATE_METRICS)) {
+    const o = el("option", { value: k, text: v.label });
+    if (clim.metric === k) o.setAttribute("selected", "");
+    ms.appendChild(o);
+  }
+  ctl.appendChild(el("div", { class: "group" }, el("label", { text: "Showing:" }), ms));
+  host.appendChild(ctl);
+
+  if (CLIM && CLIM.error) {
+    host.appendChild(el("p", { class: "sub", text: "Could not load: " + CLIM.error }));
+    return;
+  }
+  if (!CLIM || CLIM.window.from !== clim.from || CLIM.window.to !== clim.to) {
+    host.appendChild(el("p", { class: "sub", text: "Reading 35 years…" }));
+    loadClimate();
+    return;
+  }
+
+  const picks = (selection.length ? selection : ["cervinia"])
+    .filter(id => CLIM.resorts[id]).slice(0, 6);
+  if (!picks.length) {
+    host.appendChild(el("p", { class: "sub",
+      text: "Select a resort above to plot it." }));
+    return;
+  }
+  const M = CLIMATE_METRICS[clim.metric];
+  host.appendChild(el("p", { class: "sub",
+    text: M.label + ", " + mdLabel(clim.from) + " to " + mdLabel(clim.to)
+        + ", by season." }));
+
+  const series = picks.map(id => ({
+    id, name: CLIM.resorts[id].name, top: CLIM.resorts[id].top_m,
+    pts: CLIM.resorts[id].years
+      .filter(y => y[clim.metric] != null)
+      .map(y => ({ x: y.season, y: Number(y[clim.metric]), n: y.n })),
+  })).filter(s => s.pts.length > 4);
+  if (!series.length) {
+    host.appendChild(el("p", { class: "sub", text: "No data for that window." }));
+    return;
+  }
+
+  const lg = el("div", { class: "legend" });
+  for (const s of series) {
+    const item = el("span", {}, el("span", { class: "dot" }), document.createTextNode(s.name));
+    item.querySelector(".dot").style.background = SERIES[slotOf.get(s.id) ?? 0];
+    lg.appendChild(item);
+  }
+  host.appendChild(lg);
+  host.appendChild(climateChart(series, M));
+  host.appendChild(decadeTable(series, M));
+  host.appendChild(el("p", { class: "hint",
+    text: (clim.metric === "freezing_m"
+      ? "The freezing level is estimated, not observed: it is where 0 °C falls, from each "
+        + "resort's summit temperature and a standard " + CLIM.lapse_c_per_km
+        + " °C/km lapse rate. Above the summit height means it was above freezing on top. "
+      : "")
+      + "One week of weather is a noisy thing, so a trend is only worth reading where the "
+      + "interval excludes zero — those are marked. ERA5's modelled snow depth is not offered "
+      + "here: it pins at 33 m over glaciers, which would make Cervinia look like it carries "
+      + "a 26-metre snowpack all year." }));
+}
+
+function climateChart(series, M) {
+  const w = Math.max(620, ($("#view").clientWidth || 900) - 40), h = 380;
+  const m = { l: 58, r: 16, t: 14, b: 46, w, h };
+  const all = series.flatMap(s => s.pts);
+  const xs = all.map(p => p.x), ys = all.map(p => p.y);
+  const xDom = [Math.min(...xs), Math.max(...xs)];
+  const yDom = domainOf(ys);
+  // For one resort's freezing level, the summit is the number that gives the
+  // rest meaning — how far the 0 °C line still sits below the top of the
+  // mountain, and how fast it is climbing towards it. It is always above the
+  // data, so the axis has to be stretched to it or the line never appears.
+  const summit = (clim.metric === "freezing_m" && series.length === 1)
+    ? series[0].top : null;
+  if (summit && summit > yDom[1]) yDom[1] = summit * 1.02;
+  const x = v => m.l + (v - xDom[0]) / ((xDom[1] - xDom[0]) || 1) * (w - m.l - m.r);
+  const y = v => m.t + (1 - (v - yDom[0]) / ((yDom[1] - yDom[0]) || 1)) * (h - m.t - m.b);
+  const svg = chartSvg(w, h);
+  for (const v of niceTicks(yDom, 5)) {
+    svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: y(v), y2: y(v), stroke: GRID }));
+    svg.appendChild(el("text", { x: m.l - 6, y: y(v) + 3, "text-anchor": "end",
+      "font-size": 10, fill: MUTED, text: fmt(v, M.dp) }));
+  }
+  for (const v of niceTicks(xDom, 6))
+    svg.appendChild(el("text", { x: x(v), y: h - 26, "text-anchor": "middle",
+      "font-size": 10, fill: MUTED, text: seasonLabel(Math.round(v)) }));
+  svg.appendChild(el("text", { x: 13, y: (m.t + h - m.b) / 2, "font-size": 11, fill: INK2,
+    "text-anchor": "middle", transform: `rotate(-90 13 ${(m.t + h - m.b) / 2})`,
+    text: M.label + (M.unit ? ` (${M.unit})` : "") }));
+
+  if (summit) {
+    svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: y(summit), y2: y(summit),
+      stroke: SERIES[1], "stroke-width": 1.5, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: w - m.r - 4, y: y(summit) - 5, "text-anchor": "end",
+      "font-size": 10, fill: SERIES[1],
+      text: series[0].name + " summit, " + summit + " m" }));
+  }
+
+  for (const s of series) {
+    const colour = SERIES[slotOf.get(s.id) ?? 0];
+    const sorted = s.pts.slice().sort((a, b) => a.x - b.x);
+    svg.appendChild(el("path", { fill: "none", stroke: colour, "stroke-width": 1.2,
+      "stroke-opacity": 0.45,
+      d: "M" + sorted.map(p => `${x(p.x).toFixed(1)},${y(p.y).toFixed(1)}`).join("L") }));
+    for (const p of sorted) {
+      const c = el("circle", { cx: x(p.x).toFixed(1), cy: y(p.y).toFixed(1), r: 3.4,
+        fill: colour, stroke: SURF, "stroke-width": 1.2 });
+      c.addEventListener("mousemove", e => showTip(
+        `<div class="t-date">${s.name}</div><div class="t-sub">${seasonLabel(p.x)}</div>` +
+        `<table><tr><td>${M.label}</td><td>${fmt(p.y, M.dp)} ${M.unit}</td></tr>` +
+        `<tr><td>Days averaged</td><td>${p.n}</td></tr></table>`, e.clientX, e.clientY));
+      c.addEventListener("mouseleave", hideTip);
+      svg.appendChild(c);
+    }
+    const t = trend(s.pts);
+    if (t) svg.appendChild(el("line", { x1: x(xDom[0]), x2: x(xDom[1]),
+      y1: y(t.slope * xDom[0] + t.intercept), y2: y(t.slope * xDom[1] + t.intercept),
+      stroke: colour, "stroke-width": t.significant ? 2.6 : 1.6,
+      "stroke-dasharray": t.significant ? "" : "5 4" }));
+  }
+  return svg;
+}
+
+function decadeTable(series, M) {
+  const t = el("table", { class: "league" });
+  t.appendChild(el("thead", {}, el("tr", {},
+    el("th", { text: "resort" }), el("th", { text: "first 10 seasons" }),
+    el("th", { text: "last 10 seasons" }), el("th", { text: "change" }),
+    el("th", { text: "trend per decade" }), el("th", { text: "95% interval" }))));
+  const tb = el("tbody");
+  for (const s of series) {
+    const sorted = s.pts.slice().sort((a, b) => a.x - b.x);
+    const mean = g => g.reduce((a, p) => a + p.y, 0) / g.length;
+    const early = mean(sorted.slice(0, 10)), late = mean(sorted.slice(-10));
+    const tr = trend(s.pts);
+    const row = el("tr", {});
+    row.appendChild(el("td", { text: s.name }));
+    row.appendChild(el("td", { text: fmt(early, M.dp) + " " + M.unit }));
+    row.appendChild(el("td", { text: fmt(late, M.dp) + " " + M.unit }));
+    const diff = late - early;
+    const dc = el("td", { text: (diff >= 0 ? "+" : "") + fmt(diff, M.dp) + " " + M.unit });
+    if (M.better) dc.style.color =
+      (diff > 0) === (M.better === "up") ? "var(--s3)" : "var(--s2)";
+    row.appendChild(dc);
+    row.appendChild(el("td", { text: tr ? (tr.slope * 10 >= 0 ? "+" : "")
+      + fmt(tr.slope * 10, M.dp) + " " + M.unit : "—" }));
+    row.appendChild(el("td", { text: tr
+      ? fmt(tr.lo * 10, M.dp) + " to " + fmt(tr.hi * 10, M.dp)
+        + (tr.significant ? "" : "  (includes zero)") : "—" }));
+    tb.appendChild(row);
+  }
+  t.appendChild(tb);
+  return t;
 }
 
 /* ---------- scatter lab ---------- */
@@ -1541,7 +1788,11 @@ function renderLadder(host, R) {
    the test that retired it as much as the ones that passed. */
 function renderCrosswind(host, R) {
   const g = MODEL.crosswind, cw = R.crosswind || {};
-  host.appendChild(el("h3", { text: "Does the wind's direction matter? — measured, and no" }));
+  host.appendChild(el("h3", { text: "What was tried and rejected: wind direction" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "This was the project's central mechanism for a year, and it does not survive "
+        + "contact with the data. It is left here rather than quietly removed, because a "
+        + "model is only as trustworthy as the things it admits it got wrong." }));
   host.appendChild(el("p", { class: "sub",
     text: "A cable car should shut when the wind blows across it rather than along it, so "
         + "every lift's bearing was matched to OpenStreetMap and set against the day's wind "
@@ -1599,7 +1850,14 @@ function renderCrosswind(host, R) {
     host.appendChild(t);
   }
   host.appendChild(el("p", { class: "hint",
-    text: "The likeliest culprit is the instrument, not the idea. Season 1 recorded no wind "
+    text: "There are two honest readings and this data cannot separate them. The first is "
+        + "that real mountains are messier than the theory: a cable does not stand in a wind "
+        + "tunnel, it runs through gullies, past shoulders and above trees, all of which bend "
+        + "and shelter the flow long before it reaches the towers. On that reading a single "
+        + "bearing was never going to capture it, and gust speed quietly absorbs the effect "
+        + "instead. The second is measurement." }));
+  host.appendChild(el("p", { class: "hint",
+    text: "Season 1 recorded no wind "
         + "direction at all, so the only source is a reanalysis giving one dominant direction "
         + "per day on a 25 km grid — which also under-reads ridge-top gusts badly enough that "
         + "Courchevel, Méribel and Lech never once reach 60 km/h in it. Alpine valleys bend "
@@ -1707,14 +1965,18 @@ function render() {
   hideTip();
   const host = $("#view");
   host.innerHTML = "";
-  const ownControls = tab === "plan" || tab === "model";
-  $("#resortCtl").style.display = (tab === "compare" || tab === "wind") ? "" : "none";
+  const ownControls = tab === "plan" || tab === "model" || tab === "climate";
+  $("#resortCtl").style.display =
+    (tab === "compare" || tab === "wind" || tab === "climate") ? "" : "none";
   $("#rangeCtl").style.display = ownControls ? "none" : "";
-  $("#selHint").style.display = ownControls ? "none" : "";
+  // Climate picks its own calendar window, so the shared date range means
+  // nothing to it — but the resort chips still drive which lines it draws.
+  $("#selHint").style.display = (ownControls && tab !== "climate") ? "none" : "";
   try {
     ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
        lifts: renderLifts, league: renderLeague, plan: renderPlan,
-       scatter: renderScatter, model: renderModel })[tab](host);
+       scatter: renderScatter, climate: renderClimate,
+       model: renderModel })[tab](host);
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
   }
