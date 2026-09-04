@@ -249,7 +249,7 @@ def api_geometry(resort_id: str):
     with cursor() as cur:
         cur.execute("""
             SELECT g.osm_id, g.name, g.aerialway, g.bearing_deg, g.length_m,
-                   g.geometry, g.lift_id, c.name AS lift_name, c.is_link,
+                   g.geometry, g.elevations, g.lift_id, c.name AS lift_name, c.is_link,
                    COUNT(lr.id) FILTER (WHERE lr.status IN ('open','closed','hold'))
                        AS days_operational,
                    COUNT(lr.id) FILTER (WHERE lr.status = 'open') AS days_open
@@ -259,7 +259,7 @@ def api_geometry(resort_id: str):
             LEFT JOIN lift_readings lr ON lr.lift_id = l2.id
             WHERE g.resort_id = %s
             GROUP BY g.osm_id, g.resort_id, g.name, g.aerialway, g.bearing_deg,
-                     g.length_m, g.geometry, g.lift_id, c.name, c.is_link
+                     g.length_m, g.geometry, g.elevations, g.lift_id, c.name, c.is_link
         """, (resort_id,))
         rows = cur.fetchall()
 
@@ -279,6 +279,11 @@ def api_geometry(resort_id: str):
                 "aerialway": r["aerialway"],
                 "bearing": r["bearing_deg"],
                 "length_m": r["length_m"],
+                # Ground height per vertex, sampled from a local DEM at ingest.
+                # The browser cannot supply this — queryTerrainElevation returns
+                # null — so it has to travel with the geometry.
+                "elevations": (r["elevations"] if isinstance(r["elevations"], list)
+                               else json.loads(r["elevations"] or "null")),
                 "lift_name": r["lift_name"],
                 "is_link": bool(r["is_link"]),
                 # None where the lift was never matched to an observed one,

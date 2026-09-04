@@ -89,6 +89,13 @@
     </select>
   </div>
   <div>
+    <label for="cables">Cables</label>
+    <select id="cables">
+      <option value="strung">Strung at height</option>
+      <option value="draped">Draped on terrain</option>
+    </select>
+  </div>
+  <div>
     <label for="pistes">Pistes</label>
     <select id="pistes">
       <option value="off">Hidden</option>
@@ -218,6 +225,64 @@
   // finding. See the "what was tried and rejected" section in the explorer.
   var MODEL = null, modelPending = false;
   var OPEN = "#2a78d6", SHUT = "#e34948";
+
+  // ---- cables strung at height -----------------------------------------
+  // Second attempt. The first failed because it asked the browser for terrain
+  // heights and queryTerrainElevation returns null at every zoom. These come
+  // from the server instead, sampled from a local DEM at ingest, so there is
+  // nothing to query and nothing to wait for.
+  var TOWER_CLEARANCE_M = 25;   // cable height above ground at a tower
+  var SAG_M = 12;               // mid-span dip, so it reads as a cable
+  var GEOJSON = null;
+
+  function buildCableElevations(gj, exaggeration) {
+    var any = false;
+    gj.features.forEach(function (f) {
+      var ground = f.properties.elevations;
+      var n = ground && ground.length;
+      if (!n || n !== f.geometry.coordinates.length) { f.properties.cable = null; return; }
+      var a = ground[0] + TOWER_CLEARANCE_M, b = ground[n - 1] + TOWER_CLEARANCE_M;
+      f.properties.cable = ground.map(function (g, i) {
+        var t = n === 1 ? 0 : i / (n - 1);
+        var span = a + (b - a) * t - SAG_M * 4 * t * (1 - t);
+        // Never below the ground it crosses. This is what makes an up-and-over
+        // lift ride its ridge instead of tunnelling through it.
+        var h = Math.max(span, g + TOWER_CLEARANCE_M);
+        // Terrain is drawn at `exaggeration` times true height, so a cable
+        // placed at true metres would sink into the hillside.
+        return Math.round(h * exaggeration);
+      });
+      any = true;
+    });
+    return any;
+  }
+
+  function applyCableStyle() {
+    if (!map.getLayer("lifts-line") || !GEOJSON) return;
+    var strung = document.getElementById("cables").value === "strung";
+    var ex = currentExaggeration();
+    var ids = ["lifts-line", "lifts-casing", "lifts-hit"];
+    try {
+      if (strung && ex && buildCableElevations(GEOJSON, ex)) {
+        map.getSource("lifts").setData(GEOJSON);
+        var expr = ["at-interpolated",
+                    ["*", ["line-progress"],
+                     ["-", ["length", ["get", "cable"]], 1]],
+                    ["get", "cable"]];
+        ids.forEach(function (id) {
+          if (!map.getLayer(id)) return;
+          map.setLayoutProperty(id, "line-elevation-reference", "sea");
+          map.setLayoutProperty(id, "line-z-offset", expr);
+        });
+      } else {
+        ids.forEach(function (id) {
+          if (map.getLayer(id)) map.setLayoutProperty(id, "line-z-offset", 0);
+        });
+      }
+    } catch (e) {
+      console.warn("elevated cables unavailable:", e && e.message);
+    }
+  }
 
   // ---- pistes ----------------------------------------------------------
   // European colours, deliberately. OSM stores a word, and the two continents
@@ -465,10 +530,13 @@
     fetch("/api/geometry/" + resortId + ".json")
       .then(function (r) { return r.json(); })
       .then(function (gj) {
+        GEOJSON = gj;
         var src = map.getSource("lifts");
         if (src) { src.setData(gj); }
         else {
-          map.addSource("lifts", { type: "geojson", data: gj });
+          // lineMetrics powers line-progress, which samples the cable's
+          // per-vertex height array along the span.
+          map.addSource("lifts", { type: "geojson", data: gj, lineMetrics: true });
           // A wide, near-transparent casing gives a forgiving hit target and
           // keeps thin lines legible against busy terrain.
           map.addLayer({
@@ -531,6 +599,7 @@
         applyColours();
         applyGlow();
         applyPistes();
+        applyCableStyle();
         fitTo(gj);
       });
   }
@@ -610,7 +679,11 @@
     var ex = parseFloat(e.target.value);
     map.setTerrain(ex ? { source: "dem", exaggeration: ex } : null);
     map.easeTo({ pitch: ex ? 58 : 0, duration: 600 });
+    // Heights are pre-multiplied by the exaggeration, so they must be rebuilt
+    // when it changes or the cables end up buried or floating.
+    applyCableStyle();
   });
+  document.getElementById("cables").addEventListener("change", applyCableStyle);
 
   document.getElementById("look").addEventListener("change", function (e) {
     var want = e.target.value === "outdoors" ? STYLES.outdoors : STYLES.standard;

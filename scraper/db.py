@@ -375,6 +375,11 @@ CREATE TABLE IF NOT EXISTS piste_geometry (
     PRIMARY KEY (resort_id, osm_id)
 );
 CREATE INDEX IF NOT EXISTS idx_piste_geometry_resort ON piste_geometry (resort_id);
+
+-- Metres above sea level for each vertex of `geometry`, same order and length.
+-- Sampled from a local SRTM tile rather than queried in the browser, where
+-- queryTerrainElevation returns null and killed the strung-cable rendering.
+ALTER TABLE lift_geometry ADD COLUMN IF NOT EXISTS elevations JSONB;
 """
 
 
