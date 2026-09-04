@@ -89,13 +89,6 @@
     </select>
   </div>
   <div>
-    <label for="cables">Cables</label>
-    <select id="cables">
-      <option value="strung">Strung at height</option>
-      <option value="draped">Draped on terrain</option>
-    </select>
-  </div>
-  <div>
     <label for="mode">Colour by</label>
     <select id="mode">
       <option value="record">What actually happened</option>
@@ -162,8 +155,9 @@
   // Deliberate debug handle. This page can only be checked against a live
   // Mapbox token, which is restricted to the production domain, so there is no
   // local preview to poke at — and everything here lives inside a closure.
-  // Being able to type `skiMap.getPitch()` in a console is the difference
-  // between diagnosing this map and guessing at it.
+  // It earned its keep immediately: `skiMap.queryTerrainElevation(...)`
+  // returning null at every zoom is what proved elevated cables were not
+  // achievable client-side, after two screenshots had merely looked identical.
   window.skiMap = map;
 
   var popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
@@ -208,69 +202,6 @@
   // finding. See the "what was tried and rejected" section in the explorer.
   var MODEL = null, modelPending = false;
   var OPEN = "#2a78d6", SHUT = "#e34948";
-
-  // ---- cables strung at height ----------------------------------------
-  // A cable does not follow the ground; it spans between towers. Draping the
-  // line on the DEM makes a gondola crawl into every hollow it actually flies
-  // over. These give it a straight span with clearance, dipping to follow the
-  // ground only where the ground rises into it.
-  var GEOJSON = null;
-  var TOWER_CLEARANCE_M = 25;   // rough height of cable above ground at a tower
-  var SAG_M = 12;               // mid-span dip, so it reads as a cable not a wire
-
-  function elevateCables() {
-    if (!GEOJSON || !map.getSource("lifts") || !map.getTerrain()) return false;
-    var complete = true;
-    GEOJSON.features.forEach(function (f) {
-      var c = f.geometry.coordinates;
-      var ground = c.map(function (p) {
-        // Exaggerated to match what is actually drawn: at 1.4x the terrain
-        // renders 40% taller, and a cable placed at true height would sink
-        // into the hillside.
-        return map.queryTerrainElevation({ lng: p[0], lat: p[1] });
-      });
-      if (ground.some(function (v) { return v == null; })) { complete = false; return; }
-      var n = ground.length;
-      var a = ground[0] + TOWER_CLEARANCE_M, b = ground[n - 1] + TOWER_CLEARANCE_M;
-      f.properties.elevation = ground.map(function (g, i) {
-        var t = n === 1 ? 0 : i / (n - 1);
-        var span = a + (b - a) * t - SAG_M * 4 * t * (1 - t);
-        // Never below the ground it crosses: a ridge mid-way pushes the
-        // cable up rather than swallowing it.
-        return Math.max(span, g + TOWER_CLEARANCE_M);
-      });
-    });
-    if (!complete) return false;
-    map.getSource("lifts").setData(GEOJSON);
-    return true;
-  }
-
-  function applyCableStyle() {
-    if (!map.getLayer("lifts-line")) return;
-    var strung = document.getElementById("cables").value === "strung"
-                 && map.getTerrain();
-    try {
-      if (strung && elevateCables()) {
-        var expr = ["at-interpolated",
-                    ["*", ["line-progress"],
-                     ["-", ["length", ["get", "elevation"]], 1]],
-                    ["get", "elevation"]];
-        ["lifts-line", "lifts-casing", "lifts-hit"].forEach(function (id) {
-          if (!map.getLayer(id)) return;
-          map.setLayoutProperty(id, "line-elevation-reference", "sea");
-          map.setLayoutProperty(id, "line-z-offset", expr);
-        });
-      } else {
-        ["lifts-line", "lifts-casing", "lifts-hit"].forEach(function (id) {
-          if (map.getLayer(id)) map.setLayoutProperty(id, "line-z-offset", 0);
-        });
-      }
-    } catch (e) {
-      // Older renderers have no line-z-offset. Draped is a fine map, so say
-      // it once in the console and carry on rather than breaking the page.
-      console.warn("elevated cables unavailable:", e && e.message);
-    }
-  }
 
   function bandFor(gust) {
     for (var i = 0; i < MODEL.bins.length; i++)
@@ -404,13 +335,10 @@
     fetch("/api/geometry/" + resortId + ".json")
       .then(function (r) { return r.json(); })
       .then(function (gj) {
-        GEOJSON = gj;
         var src = map.getSource("lifts");
         if (src) { src.setData(gj); }
         else {
-          // lineMetrics is required for line-progress, which is how the
-          // per-vertex elevation array is sampled along the cable.
-          map.addSource("lifts", { type: "geojson", data: gj, lineMetrics: true });
+          map.addSource("lifts", { type: "geojson", data: gj });
           // A wide, near-transparent casing gives a forgiving hit target and
           // keeps thin lines legible against busy terrain.
           map.addLayer({
@@ -472,9 +400,6 @@
         }
         applyColours();
         fitTo(gj);
-        // Terrain tiles for the new view are not loaded yet, and elevations
-        // cannot be queried until they are — so wait for the map to settle.
-        map.once("idle", applyCableStyle);
       });
   }
 
@@ -552,11 +477,7 @@
     var ex = parseFloat(e.target.value);
     map.setTerrain(ex ? { source: "dem", exaggeration: ex } : null);
     map.easeTo({ pitch: ex ? 58 : 0, duration: 600 });
-    // Exaggeration scales the rendered terrain, so the cable heights have to
-    // be requeried or they end up buried or floating.
-    map.once("idle", applyCableStyle);
   });
-  document.getElementById("cables").addEventListener("change", applyCableStyle);
 
   document.getElementById("look").addEventListener("change", function (e) {
     var want = e.target.value === "outdoors" ? STYLES.outdoors : STYLES.standard;
