@@ -251,6 +251,29 @@
       map.setPaintProperty("lifts-line", "line-color", colour);
   }
 
+  // On the dark light presets the lift ramp is dark blue on a dark mountain and
+  // all but disappears. Emissive strength makes the lines self-lit rather than
+  // shaded by the scene, so they read as lit cables against a night hillside
+  // instead of being swallowed by it.
+  function applyGlow() {
+    var look = document.getElementById("look").value;
+    var dark = look === "dusk" || look === "night";
+    var glow = look === "outdoors" ? 0 : (dark ? 1 : 0.4);
+    [["lifts-line", glow], ["lifts-casing", look === "outdoors" ? 0 : 0.6]]
+      .forEach(function (pair) {
+        if (!map.getLayer(pair[0])) return;
+        try { map.setPaintProperty(pair[0], "line-emissive-strength", pair[1]); }
+        catch (e) { /* older renderers simply shade the line as before */ }
+      });
+    if (map.getLayer("lifts-label")) {
+      try {
+        map.setPaintProperty("lifts-label", "text-color", dark ? "#f4f7fb" : "#1a202c");
+        map.setPaintProperty("lifts-label", "text-halo-color", dark ? "#101418" : "#ffffff");
+        map.setPaintProperty("lifts-label", "text-emissive-strength", dark ? 1 : 0);
+      } catch (e) { /* ditto */ }
+    }
+  }
+
   function applyColours() {
     var rid = document.getElementById("resort").value;
     var mode = document.getElementById("mode").value;
@@ -399,6 +422,7 @@
           });
         }
         applyColours();
+        applyGlow();
         fitTo(gj);
       });
   }
@@ -487,6 +511,7 @@
       try { map.setConfigProperty("basemap", "lightPreset", e.target.value); } catch (err) {
         console.warn("lightPreset unsupported:", err && err.message);
       }
+      applyGlow();
       return;
     }
     lastStyleUrl = want;
