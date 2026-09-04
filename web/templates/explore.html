@@ -1288,6 +1288,7 @@ function renderModel(host) {
   renderDoseResponse(host, R);
   renderScalogram(host, R);
   renderLadder(host, R);
+  renderCrosswind(host, R);
   renderModelTable(host, ids);
 }
 
@@ -1533,6 +1534,127 @@ function renderLadder(host, R) {
     text: known + " of " + R.ladder.length + " lifts are matched to OpenStreetMap geometry; "
         + "the rest have no bearing yet. “off” counts the snapshots where that lift was on the "
         + "wrong side of the line." }));
+}
+
+/* The crosswind hypothesis, and its disproof. Kept visible rather than quietly
+   dropped: the project leaned on it for months, and a reader deserves to see
+   the test that retired it as much as the ones that passed. */
+function renderCrosswind(host, R) {
+  const g = MODEL.crosswind, cw = R.crosswind || {};
+  host.appendChild(el("h3", { text: "Does the wind's direction matter? — measured, and no" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "A cable car should shut when the wind blows across it rather than along it, so "
+        + "every lift's bearing was matched to OpenStreetMap and set against the day's wind "
+        + "direction. Holding gust strength roughly fixed — each resort's windiest "
+        + Math.round(100 - g.windy_quantile * 100) + "% of days — the angle across the cable "
+        + "separates shut from running with an AUC of " + fmt(g.angle_auc, 3) + " over "
+        + g.windy_pairs + " pairs. 0.5 is a coin flip. " + g.lifts_above_half + " of "
+        + g.lifts_tested + " lifts land above it and " + (g.lifts_tested - g.lifts_above_half)
+        + " below." }));
+
+  const s = cw.summary;
+  if (s) {
+    host.appendChild(el("div", { class: "stats" },
+      stat("gust alone (AUC)", fmt(s.auc_gust, 3), "this resort, within lift"),
+      stat("crosswind (AUC)", fmt(s.auc_cross, 3),
+           fmt(s.delta, 3) + " against gust"),
+      stat("angle alone, windy days", s.auc_frac_windy == null ? "—" : fmt(s.auc_frac_windy, 3),
+           "strength held fixed"),
+      stat("lifts with a bearing", String(s.lifts),
+           s.better + " improve on gust")));
+  }
+
+  const rose = cw.rose || [];
+  if (rose.length) {
+    host.appendChild(el("p", { class: "sub", style: "margin-top:0.6rem;",
+      text: "Closure rate by the direction the wind came from. Petal length is the share of "
+          + "readings shut on the resort's windy days; petal width shows how many separate "
+          + "days the sector rests on — which is the point. One season spreads roughly fifty "
+          + "days across twelve sectors, so the boldest-looking petals are often three days." }));
+    host.appendChild(roseSvg(rose, g.sector_deg));
+  }
+
+  const lifts = cw.lifts || [];
+  if (lifts.length) {
+    const t = el("table", { class: "league" });
+    t.appendChild(el("thead", {}, el("tr", {},
+      el("th", { text: "lift" }), el("th", { text: "bearing" }),
+      el("th", { text: "shut" }), el("th", { text: "AUC gust" }),
+      el("th", { text: "AUC crosswind" }), el("th", { text: "angle alone" }))));
+    const tb = el("tbody");
+    for (const l of lifts.slice().sort((a, b) => b.delta - a.delta)) {
+      const tr = el("tr", {});
+      const nm = el("td", { text: l.name });
+      if (l.link) nm.appendChild(el("span", { class: "badge", text: "LINK" }));
+      tr.appendChild(nm);
+      tr.appendChild(el("td", { text: fmt(l.bearing, 0) + "° " + compass(l.bearing) }));
+      tr.appendChild(el("td", { text: String(l.shut) }));
+      tr.appendChild(el("td", { text: fmt(l.auc_gust, 2) }));
+      tr.appendChild(el("td", { text: fmt(l.auc_cross, 2) }));
+      tr.appendChild(el("td", { text: l.auc_frac_windy == null ? "—"
+                                    : fmt(l.auc_frac_windy, 2) }));
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    host.appendChild(t);
+  }
+  host.appendChild(el("p", { class: "hint",
+    text: "The likeliest culprit is the instrument, not the idea. Season 1 recorded no wind "
+        + "direction at all, so the only source is a reanalysis giving one dominant direction "
+        + "per day on a 25 km grid — which also under-reads ridge-top gusts badly enough that "
+        + "Courchevel, Méribel and Lech never once reach 60 km/h in it. Alpine valleys bend "
+        + "the wind tens of degrees, and a hold declared at 08:00 need not match the day's "
+        + "average vector. Collection now records direction at 10 m and at 700 hPa at the hour "
+        + "the wind peaked, so season 2 can retry this properly." }));
+}
+
+function compass(deg) {
+  const pts = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
+               "S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  return pts[Math.round((deg % 360) / 22.5) % 16];
+}
+
+function roseSvg(rose, sector) {
+  const size = 340, cx = size / 2, cy = size / 2, rMax = size / 2 - 44;
+  const svg = chartSvg(size, size);
+  const maxPct = Math.max(10, ...rose.map(r => r.windy_pct_shut ?? 0));
+  const maxDays = Math.max(1, ...rose.map(r => r.days));
+  for (const frac of [0.5, 1]) {
+    svg.appendChild(el("circle", { cx, cy, r: rMax * frac, fill: "none", stroke: GRID }));
+    svg.appendChild(el("text", { x: cx + 3, y: cy - rMax * frac + 10, "font-size": 9,
+      fill: MUTED, text: fmt(maxPct * frac, 0) + "%" }));
+  }
+  for (const [deg, label] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]]) {
+    const a = (deg - 90) * Math.PI / 180;
+    svg.appendChild(el("text", { x: cx + Math.cos(a) * (rMax + 16),
+      y: cy + Math.sin(a) * (rMax + 16) + 4, "text-anchor": "middle",
+      "font-size": 11, fill: INK2, text: label }));
+  }
+  for (const r of rose) {
+    const pct = r.windy_pct_shut;
+    if (pct == null) continue;
+    // Width carries the evidence, length carries the claim: a fat short petal
+    // is better supported than a thin tall one.
+    const half = (sector / 2) * (0.35 + 0.65 * r.days / maxDays) * Math.PI / 180;
+    const mid = (r.from_deg + sector / 2 - 90) * Math.PI / 180;
+    const len = rMax * Math.min(1, pct / maxPct);
+    const p1 = [cx + Math.cos(mid - half) * len, cy + Math.sin(mid - half) * len];
+    const p2 = [cx + Math.cos(mid + half) * len, cy + Math.sin(mid + half) * len];
+    const wedge = el("path", {
+      d: `M${cx},${cy}L${p1[0].toFixed(1)},${p1[1].toFixed(1)}`
+       + `A${len.toFixed(1)},${len.toFixed(1)} 0 0 1 ${p2[0].toFixed(1)},${p2[1].toFixed(1)}Z`,
+      fill: SERIES[0], "fill-opacity": 0.28 + 0.5 * r.days / maxDays,
+      stroke: SURF, "stroke-width": 1 });
+    wedge.addEventListener("mousemove", e => showTip(
+      `<div class="t-date">Wind from ${r.from_deg}° ${compass(r.from_deg)}</div>` +
+      `<table><tr><td>Shut on windy days</td><td>${fmt(pct, 1)}%</td></tr>` +
+      `<tr><td>Shut overall</td><td>${fmt(r.pct_shut, 1)}%</td></tr>` +
+      `<tr><td>Days in this sector</td><td>${r.days}</td></tr>` +
+      `<tr><td>Lift-readings</td><td>${r.n}</td></tr></table>`, e.clientX, e.clientY));
+    wedge.addEventListener("mouseleave", hideTip);
+    svg.appendChild(wedge);
+  }
+  return el("div", { style: "display:flex;justify-content:center;" }, svg);
 }
 
 function renderModelTable(host, ids) {

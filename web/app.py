@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import re
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -322,6 +323,7 @@ def api_model():
     """
     from scraper import model as m
     from scraper import nested as n
+    from scraper import crosswind as x
 
     with cursor() as cur:
         cur.execute("SELECT id, name, area, country FROM resorts")
@@ -373,9 +375,38 @@ def api_model():
                          for b, v in resp.items()},
         }
 
+    # Crosswind: measured, null, and shown anyway. A hypothesis the project
+    # leaned on for months earns its disproof being visible.
+    cells = x._cells()
+    cw_lifts = x.per_lift(cells)
+    by_res = {r["resort_id"]: r for r in x.by_resort(cw_lifts)}
+    roses = defaultdict(list)
+    for c in cells:
+        roses[c["resort_id"]].append(c)
+    for rid, block in out.items():
+        summary = by_res.get(rid)
+        block["crosswind"] = {
+            "summary": {k: _plain(v) for k, v in summary.items()} if summary else None,
+            "lifts": [{k: _plain(v) for k, v in l.items()}
+                      for l in cw_lifts if l["resort_id"] == rid],
+            "rose": x.rose(roses[rid]) if roses.get(rid) else [],
+        }
+    tested = [l for l in cw_lifts if l["auc_frac_windy"] is not None]
+    windy_pairs = sum(l["windy_pairs"] for l in tested)
+
     payload = {
         "core_season": list(n.CORE_SEASON),
         "bins": [{"upper": u, "name": b} for u, b in m.BINS],
+        "crosswind": {
+            "cells": len(cells),
+            "lifts_tested": len(tested),
+            "lifts_above_half": sum(1 for l in tested if l["auc_frac_windy"] > 0.5),
+            "windy_pairs": windy_pairs,
+            "angle_auc": (sum(l["auc_frac_windy"] * l["windy_pairs"] for l in tested)
+                          / windy_pairs) if windy_pairs else None,
+            "windy_quantile": x.WINDY_QUANTILE,
+            "sector_deg": x.SECTOR_DEG,
+        },
         "thresholds": {"cr": n.CR_GOOD, "cs": n.CS_GOOD,
                        "mixed": n.MIN_MIXED_SNAPSHOTS},
         "pooled": {b: {"n": v["n"], "pct_open": v["pct_open"],
