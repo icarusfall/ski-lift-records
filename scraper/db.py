@@ -357,6 +357,24 @@ CREATE TABLE IF NOT EXISTS station_snow (
     PRIMARY KEY (station_id, date)
 );
 CREATE INDEX IF NOT EXISTS idx_station_snow_date ON station_snow (date);
+
+-- Piste geometry from OpenStreetMap. Keyed on (resort_id, osm_id) for the same
+-- reason lift_geometry is: neighbouring resorts' bounding boxes overlap, and a
+-- run on a shared border genuinely belongs to both.
+CREATE TABLE IF NOT EXISTS piste_geometry (
+    osm_id      BIGINT NOT NULL,
+    resort_id   VARCHAR(50) NOT NULL REFERENCES resorts(id),
+    name        VARCHAR(200),
+    -- OSM piste:difficulty. Rendered on the European convention — easy is
+    -- BLUE and intermediate is RED, not the North American scheme.
+    difficulty  VARCHAR(20),
+    piste_type  VARCHAR(30),
+    length_m    INTEGER,
+    geometry    JSONB,
+    fetched_at  TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (resort_id, osm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_piste_geometry_resort ON piste_geometry (resort_id);
 """
 
 

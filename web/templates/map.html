@@ -89,6 +89,13 @@
     </select>
   </div>
   <div>
+    <label for="pistes">Pistes</label>
+    <select id="pistes">
+      <option value="off">Hidden</option>
+      <option value="on">Show runs</option>
+    </select>
+  </div>
+  <div>
     <label for="mode">Colour by</label>
     <select id="mode">
       <option value="record">What actually happened</option>
@@ -114,6 +121,15 @@
     <span><span class="sw" style="background:#2a78d6"></span>running</span>
     <span><span class="sw" style="background:#e34948"></span>shut</span>
     <span><span class="sw" style="background:#898781"></span>not in the model</span>
+  </div>
+  <div class="legend" id="legendPistes" style="display:none;">
+    <span>Runs:</span>
+    <span><span class="sw" style="background:#008300"></span>novice</span>
+    <span><span class="sw" style="background:#2a78d6"></span>easy</span>
+    <span><span class="sw" style="background:#e34948"></span>intermediate</span>
+    <span><span class="sw" style="background:#1a202c"></span>advanced</span>
+    <span><span class="sw" style="background:#eb6834"></span>freeride</span>
+    <span><span class="sw" style="background:#898781"></span>ungraded</span>
   </div>
 </div>
 <div id="predNote" class="warn" style="display:none;padding:0.6rem 1.2rem;
@@ -203,6 +219,89 @@
   var MODEL = null, modelPending = false;
   var OPEN = "#2a78d6", SHUT = "#e34948";
 
+  // ---- pistes ----------------------------------------------------------
+  // European colours, deliberately. OSM stores a word, and the two continents
+  // disagree in a way that would mislead exactly this audience: here easy is
+  // BLUE and intermediate is RED, where North America has no red at all and
+  // calls the same gradient green/blue/black. Every resort in this project is
+  // Alpine or Pyrenean, so European is the correct reading.
+  var PISTE_COLOURS = [
+    "novice", "#008300",
+    "easy", "#2a78d6",
+    "intermediate", "#e34948",
+    "advanced", "#1a202c",
+    "expert", "#1a202c",
+    "extreme", "#1a202c",
+    "freeride", "#eb6834",
+  ];
+  var pistesLoadedFor = null;
+
+  function pistesWanted() {
+    return document.getElementById("pistes").value === "on";
+  }
+
+  function applyPistes() {
+    var rid = document.getElementById("resort").value;
+    var on = pistesWanted();
+    document.getElementById("legendPistes").style.display = on ? "" : "none";
+    if (!on) {
+      ["pistes-line", "pistes-label"].forEach(function (id) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
+      });
+      return;
+    }
+    if (pistesLoadedFor === rid && map.getLayer("pistes-line")) {
+      ["pistes-line", "pistes-label"].forEach(function (id) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "visible");
+      });
+      return;
+    }
+    fetch("/api/pistes/" + rid + ".json")
+      .then(function (r) { return r.json(); })
+      .then(function (gj) {
+        pistesLoadedFor = rid;
+        if (map.getSource("pistes")) { map.getSource("pistes").setData(gj); }
+        else { map.addSource("pistes", { type: "geojson", data: gj }); }
+        var colour = ["match", ["get", "difficulty"]]
+          .concat(PISTE_COLOURS).concat([NO_DATA]);
+        if (!map.getLayer("pistes-line")) {
+          // Beneath the lifts: the runs are context, and a lift line that
+          // disappears under three hundred pistes defeats the whole page.
+          var before = map.getLayer("lifts-hit") ? "lifts-hit" : undefined;
+          map.addLayer({
+            id: "pistes-line", type: "line", source: "pistes",
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": colour,
+              "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.2, 15, 3.5],
+              "line-opacity": 0.75,
+            },
+          }, before);
+          map.addLayer({
+            id: "pistes-label", type: "symbol", source: "pistes",
+            minzoom: 13.5,
+            layout: {
+              "symbol-placement": "line",
+              "text-field": ["get", "name"],
+              "text-size": 10,
+            },
+            paint: {
+              "text-color": "#3c3a35",
+              "text-halo-color": "#ffffff",
+              "text-halo-width": 1.4,
+            },
+          }, before);
+        } else {
+          map.setPaintProperty("pistes-line", "line-color", colour);
+        }
+        ["pistes-line", "pistes-label"].forEach(function (id) {
+          map.setLayoutProperty(id, "visibility", "visible");
+        });
+        applyGlow();
+      })
+      .catch(function (e) { console.warn("pistes:", e && e.message); });
+  }
+
   function bandFor(gust) {
     for (var i = 0; i < MODEL.bins.length; i++)
       if (gust < MODEL.bins[i].upper) return MODEL.bins[i].name;
@@ -259,12 +358,20 @@
     var look = document.getElementById("look").value;
     var dark = look === "dusk" || look === "night";
     var glow = look === "outdoors" ? 0 : (dark ? 1 : 0.4);
-    [["lifts-line", glow], ["lifts-casing", look === "outdoors" ? 0 : 0.6]]
+    [["lifts-line", glow], ["lifts-casing", look === "outdoors" ? 0 : 0.6],
+     ["pistes-line", look === "outdoors" ? 0 : (dark ? 0.9 : 0.4)]]
       .forEach(function (pair) {
         if (!map.getLayer(pair[0])) return;
         try { map.setPaintProperty(pair[0], "line-emissive-strength", pair[1]); }
         catch (e) { /* older renderers simply shade the line as before */ }
       });
+    if (map.getLayer("pistes-label")) {
+      try {
+        map.setPaintProperty("pistes-label", "text-color", dark ? "#d7dde5" : "#3c3a35");
+        map.setPaintProperty("pistes-label", "text-halo-color", dark ? "#101418" : "#ffffff");
+        map.setPaintProperty("pistes-label", "text-emissive-strength", dark ? 1 : 0);
+      } catch (e) { /* older renderers shade the label as before */ }
+    }
     if (map.getLayer("lifts-label")) {
       try {
         map.setPaintProperty("lifts-label", "text-color", dark ? "#f4f7fb" : "#1a202c");
@@ -423,6 +530,7 @@
         }
         applyColours();
         applyGlow();
+        applyPistes();
         fitTo(gj);
       });
   }
@@ -464,6 +572,7 @@
   document.getElementById("resort").addEventListener("change", function (e) {
     load(e.target.value);
   });
+  document.getElementById("pistes").addEventListener("change", applyPistes);
   document.getElementById("mode").addEventListener("change", applyColours);
   var windEl = document.getElementById("wind");
   function setWind(v) {
@@ -515,6 +624,7 @@
       return;
     }
     lastStyleUrl = want;
+    pistesLoadedFor = null;      // setStyle discards the source and layers
     map.setStyle(want);
   });
 })();

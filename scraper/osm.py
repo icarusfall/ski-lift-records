@@ -51,6 +51,37 @@ RAILWAY_TYPES = {"funicular": "funicular", "narrow_gauge": "rack_railway",
 RAIL_MIN_LENGTH_M = 250
 
 
+def bbox_for(resort: dict) -> str:
+    lat, lon = resort["latitude"], resort["longitude"]
+    return (f"{lat - BBOX_PAD},{lon - BBOX_PAD},"
+            f"{lat + BBOX_PAD},{lon + BBOX_PAD}")
+
+
+def overpass(query: str, attempts: int = 3):
+    """POST a query, waiting out Overpass's busy periods rather than hammering.
+
+    The public instance sheds load with 429 when its query queue is full, and
+    returns 504 when a query exceeds its time budget. Both are transient and
+    about the server's load rather than about us, so they are worth waiting
+    out — generously, since it is a free shared service.
+    """
+    delay = 30.0
+    for attempt in range(1, attempts + 1):
+        resp = requests.post(OVERPASS_URL, data={"data": query},
+                             headers=HEADERS, timeout=240)
+        if resp.status_code in (429, 504, 503) and attempt < attempts:
+            label = "busy" if resp.status_code == 429 else "timed out"
+            print(f"         Overpass {label} ({resp.status_code}); waiting {delay:.0f}s")
+            time.sleep(delay)
+            delay *= 2
+            continue
+        break
+    if resp.status_code == 429:
+        raise RuntimeError("Overpass still busy after retries — try again later")
+    resp.raise_for_status()
+    return resp
+
+
 def _bearing(a: dict, b: dict) -> float:
     """Compass bearing from the first point to the last, in degrees."""
     lat1, lat2 = math.radians(a["lat"]), math.radians(b["lat"])
@@ -71,36 +102,13 @@ def _length_m(geom: list[dict]) -> int:
 
 
 def fetch_resort(resort: dict, attempts: int = 3) -> list[dict]:
-    """Fetch one resort's aerialways, waiting out Overpass's busy periods.
-
-    The public instance sheds load with 429 when its query queue is full, and
-    returns 504 when a query exceeds its time budget. Both are transient and
-    about the server's load rather than about us, so they are worth waiting
-    out — generously, since it is a free shared service.
-    """
-    lat, lon = resort["latitude"], resort["longitude"]
-    bbox = f"{lat - BBOX_PAD},{lon - BBOX_PAD},{lat + BBOX_PAD},{lon + BBOX_PAD}"
+    """Fetch one resort's aerialways and rail-based lifts."""
     query = (f'[out:json][timeout:180];('
-             f'way["aerialway"]({bbox});'
-             f'way["railway"="funicular"]({bbox});'
-             f'way["railway"]["rack"]({bbox});'
+             f'way["aerialway"]({bbox_for(resort)});'
+             f'way["railway"="funicular"]({bbox_for(resort)});'
+             f'way["railway"]["rack"]({bbox_for(resort)});'
              f');out tags geom;')
-
-    delay = 30.0
-    for attempt in range(1, attempts + 1):
-        resp = requests.post(OVERPASS_URL, data={"data": query},
-                             headers=HEADERS, timeout=240)
-        if resp.status_code in (429, 504, 503) and attempt < attempts:
-            label = "busy" if resp.status_code == 429 else "timed out"
-            print(f"         Overpass {label} ({resp.status_code}); waiting {delay:.0f}s")
-            time.sleep(delay)
-            delay *= 2
-            continue
-        break
-
-    if resp.status_code == 429:
-        raise RuntimeError("Overpass still busy after retries — try again later")
-    resp.raise_for_status()
+    resp = overpass(query, attempts)
 
     out = []
     for el in resp.json().get("elements", []):

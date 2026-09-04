@@ -589,6 +589,44 @@ def _attach_stations(out: dict, start: str, end: str) -> None:
                                    key=lambda s: s["rank"])
 
 
+@app.route("/api/pistes/<resort_id>.json")
+def api_pistes(resort_id: str):
+    """Downhill runs as GeoJSON, served apart from the lifts.
+
+    A big resort carries several hundred runs against a few dozen lifts, so
+    folding these into /api/geometry would triple the payload every visitor
+    pays for whether or not they ever switch the layer on.
+    """
+    with cursor() as cur:
+        cur.execute("""
+            SELECT osm_id, name, difficulty, length_m, geometry
+            FROM piste_geometry WHERE resort_id = %s
+            ORDER BY length_m DESC
+        """, (resort_id,))
+        rows = cur.fetchall()
+
+    features = []
+    for r in rows:
+        coords = r["geometry"] if isinstance(r["geometry"], list) else json.loads(r["geometry"] or "[]")
+        if len(coords) < 2:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": {
+                "osm_id": r["osm_id"],
+                "name": r["name"] or "",
+                # Empty string rather than null: a Mapbox `match` expression
+                # needs a value it can fall through on.
+                "difficulty": r["difficulty"] or "",
+                "length_m": r["length_m"],
+            },
+        })
+    resp = jsonify({"type": "FeatureCollection", "features": features})
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
 @app.route("/api/outlook.json")
 def api_outlook():
     """Expected conditions for a calendar window, per resort.
