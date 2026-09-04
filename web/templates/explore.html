@@ -197,7 +197,8 @@ const METRICS = {
 const TABS = [
   ["heatmap", "Season heatmap"], ["compare", "Compare"], ["wind", "Wind vs open"],
   ["lifts", "Lift reliability"], ["league", "League table"], ["plan", "Plan a trip"],
-  ["scatter", "Scatter lab"], ["climate", "35 years"], ["model", "How it works"],
+  ["scatter", "Scatter lab"], ["climate", "35 years"], ["sun", "Sun & shadow"],
+  ["model", "How it works"],
 ];
 
 /* ---------- utilities ---------- */
@@ -890,6 +891,188 @@ function renderPlan(host) {
         + (data.resorts[0].climate_years || 35) + " years whose window contained three consecutive "
         + "days with gusts over 60 km/h. THIN marks resorts whose observed response still rests on "
         + "few days." }));
+}
+
+/* ---------- when the mountain takes the sun ---------- */
+let SUN = null, sunLoading = false, sunPoint = null;
+let sunOpts = { resort: "cervinia", date: "2027-02-14" };
+
+function loadSun() {
+  if (sunLoading) return;
+  sunLoading = true;
+  fetch(`/api/sun/${sunOpts.resort}.json?date=${sunOpts.date}`)
+    .then(r => r.json())
+    .then(d => { SUN = d; sunLoading = false; render(); })
+    .catch(e => { sunLoading = false; SUN = { error: e.message }; render(); });
+}
+
+function renderSun(host) {
+  host.appendChild(el("h2", { text: "When the mountain takes the sun" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "In a deep valley you do not lose the sun at sunset — you lose it when a ridge "
+        + "gets in the way, which in midwinter can be the middle of the afternoon. Every "
+        + "lift station has a horizon measured from the terrain in all 72 compass "
+        + "directions; the sun is up while it clears that skyline." }));
+
+  const ctl = el("div", { class: "controls", style: "margin-bottom:0.6rem;" });
+  const rs = el("select", { onchange: e => {
+    sunOpts.resort = e.target.value; SUN = null; sunPoint = null; render(); } });
+  for (const r of RESORTS) {
+    const o = el("option", { value: r.id, text: r.name });
+    if (sunOpts.resort === r.id) o.setAttribute("selected", "");
+    rs.appendChild(o);
+  }
+  ctl.appendChild(el("div", { class: "group" }, el("label", { text: "Resort:" }), rs));
+  const dp = el("input", { type: "date", value: sunOpts.date });
+  dp.addEventListener("change", e => {
+    if (e.target.value) { sunOpts.date = e.target.value; SUN = null; render(); } });
+  ctl.appendChild(el("div", { class: "group" }, el("label", { text: "Date:" }), dp));
+  host.appendChild(ctl);
+
+  if (SUN && SUN.error) {
+    host.appendChild(el("p", { class: "sub", text: "Could not load: " + SUN.error }));
+    return;
+  }
+  if (!SUN || SUN.resort_id !== sunOpts.resort || SUN.date !== sunOpts.date) {
+    host.appendChild(el("p", { class: "sub", text: "Tracing the skyline…" }));
+    loadSun();
+    return;
+  }
+  if (!SUN.points.length) {
+    host.appendChild(el("p", { class: "sub",
+      text: "No horizon profiles for this resort yet." }));
+    return;
+  }
+
+  const pts = SUN.points.slice().sort((a, b) => (a.hours - b.hours));
+  if (!sunPoint || !pts.some(p => p.name === sunPoint.name && p.kind === sunPoint.kind)) {
+    // Open on the valley floor rather than on whichever station happens to be
+    // worst: the question this answers is about the village, and the lowest
+    // base station is the closest thing to it.
+    const bases = pts.filter(p => p.kind === "base" && p.elevation_m != null);
+    sunPoint = bases.length
+      ? bases.reduce((a, b) => (a.elevation_m <= b.elevation_m ? a : b))
+      : pts[0];
+  }
+  const flat = pts.find(p => p.flat_first) || {};
+  host.appendChild(el("p", { class: "sub",
+    text: `With no mountains at all the sun would be up ${flat.flat_first}–${flat.flat_last}. `
+        + `Across ${pts.length} stations the median is `
+        + fmt(pts[Math.floor(pts.length / 2)].hours, 1) + " hours." }));
+
+  host.appendChild(sunPathChart(sunPoint, SUN.track));
+  host.appendChild(el("p", { class: "hint",
+    text: "The filled shape is the skyline seen from " + sunPoint.name
+        + (sunPoint.elevation_m ? ` (${sunPoint.elevation_m} m, ${sunPoint.kind})` : "")
+        + ". The curve is the sun's path across the sky that day — where it dips into "
+        + "the shape, the station is in shadow. Pick another station from the table." }));
+
+  const t = el("table", { class: "league" });
+  t.appendChild(el("thead", {}, el("tr", {},
+    el("th", { text: "station" }), el("th", { text: "m" }), el("th", { text: "" }),
+    el("th", { text: "sun from" }), el("th", { text: "until" }),
+    el("th", { text: "hours" }), el("th", { text: "lost to terrain" }))));
+  const tb = el("tbody");
+  for (const p of pts) {
+    const tr = el("tr", { style: "cursor:pointer;"
+      + (p === sunPoint ? "background:" + WASH + ";" : "") });
+    tr.addEventListener("click", () => { sunPoint = p; render(); window.scrollTo({ top: 0 }); });
+    tr.appendChild(el("td", { text: p.name + (p.windows > 1 ? "  ⚑" : "") }));
+    tr.appendChild(el("td", { text: p.elevation_m == null ? "—" : String(p.elevation_m) }));
+    tr.appendChild(el("td", { text: p.kind }));
+    tr.appendChild(el("td", { text: p.first || "—" }));
+    tr.appendChild(el("td", { text: p.last || "—" }));
+    tr.appendChild(el("td", { text: fmt(p.hours, 1) }));
+    const lost = flat.flat_first ? (hhmmToH(flat.flat_last) - hhmmToH(flat.flat_first)) - p.hours : null;
+    const td = el("td", { text: lost == null ? "—" : fmt(lost, 1) + " h" });
+    if (lost != null && lost > 2) td.style.color = "var(--s2)";
+    tr.appendChild(td);
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  host.appendChild(t);
+  host.appendChild(el("p", { class: "hint",
+    text: "⚑ marks a station whose day is broken into more than one window — a peak due "
+        + "south can take the sun away and hand it back. Heights come from a 30 m terrain "
+        + "model, which under-reads sharp summits by a hundred metres or so; that flatters "
+        + "a nearby skyline slightly, so treat these as good to a few minutes rather than "
+        + "to the minute." }));
+}
+
+const hhmmToH = s => { const [h, m] = s.split(":").map(Number); return h + m / 60; };
+
+function sunPathChart(point, track) {
+  const w = Math.max(620, ($("#view").clientWidth || 900) - 40), h = 330;
+  const m = { l: 44, r: 16, t: 16, b: 42, w, h };
+  const step = point.azimuth_step || 5;
+  const lit = track.filter(p => p.el > -1);
+  const azs = lit.map(p => p.az);
+  // Winter sun never reaches the northern sky, so showing the full circle
+  // would waste half the chart on empty horizon.
+  const xDom = [Math.max(0, Math.min(...azs) - 25), Math.min(360, Math.max(...azs) + 25)];
+  const yMax = Math.max(10, Math.max(...point.horizon, ...lit.map(p => p.el)) + 5);
+  const x = v => m.l + (v - xDom[0]) / (xDom[1] - xDom[0]) * (w - m.l - m.r);
+  const y = v => m.t + (1 - v / yMax) * (h - m.t - m.b);
+  const svg = chartSvg(w, h);
+
+  for (const v of niceTicks([0, yMax], 5)) {
+    svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: y(v), y2: y(v), stroke: GRID }));
+    svg.appendChild(el("text", { x: m.l - 5, y: y(v) + 3, "text-anchor": "end",
+      "font-size": 10, fill: MUTED, text: fmt(v, 0) + "°" }));
+  }
+  for (const [deg, label] of [[90, "E"], [135, "SE"], [180, "S"], [225, "SW"], [270, "W"]]) {
+    if (deg < xDom[0] || deg > xDom[1]) continue;
+    svg.appendChild(el("line", { x1: x(deg), x2: x(deg), y1: m.t, y2: h - m.b,
+      stroke: GRID, "stroke-dasharray": "2 3" }));
+    svg.appendChild(el("text", { x: x(deg), y: h - 26, "text-anchor": "middle",
+      "font-size": 10, fill: MUTED, text: label }));
+  }
+  svg.appendChild(el("text", { x: (m.l + w - m.r) / 2, y: h - 8, "text-anchor": "middle",
+    "font-size": 11, fill: INK2, text: "Compass bearing" }));
+
+  // The skyline, as a filled silhouette.
+  const pts = [];
+  for (let a = Math.floor(xDom[0]); a <= xDom[1]; a += 1) {
+    const i = a / step, lo = Math.floor(i) % point.horizon.length;
+    const hi = (lo + 1) % point.horizon.length, f = i - Math.floor(i);
+    pts.push([x(a), y(point.horizon[lo] * (1 - f) + point.horizon[hi] * f)]);
+  }
+  svg.appendChild(el("path", { fill: "#6b6a63", "fill-opacity": 0.55, stroke: "#4a4944",
+    "stroke-width": 1,
+    d: "M" + pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("L")
+       + `L${x(xDom[1]).toFixed(1)},${y(0)}L${x(xDom[0]).toFixed(1)},${y(0)}Z` }));
+
+  // The sun's track, drawn in two colours: above the skyline it is lit.
+  const horizonAt = a => {
+    const i = a / step, lo = Math.floor(i) % point.horizon.length;
+    const hi = (lo + 1) % point.horizon.length, f = i - Math.floor(i);
+    return point.horizon[lo] * (1 - f) + point.horizon[hi] * f;
+  };
+  for (let i = 0; i + 1 < lit.length; i++) {
+    const a = lit[i], b = lit[i + 1];
+    const up = a.el > horizonAt(a.az);
+    svg.appendChild(el("line", { x1: x(a.az), y1: y(a.el), x2: x(b.az), y2: y(b.el),
+      stroke: up ? "#eda100" : "#898781", "stroke-width": up ? 3 : 1.6,
+      "stroke-opacity": up ? 1 : 0.6 }));
+  }
+  for (const p of lit) {
+    if (!p.t.endsWith(":00")) continue;
+    const up = p.el > horizonAt(p.az);
+    const c = el("circle", { cx: x(p.az), cy: y(p.el), r: 3.4,
+      fill: up ? "#eda100" : SURF, stroke: up ? SURF : BASE, "stroke-width": 1.4 });
+    c.addEventListener("mousemove", e => showTip(
+      `<div class="t-date">${p.t}</div><table>` +
+      `<tr><td>Sun elevation</td><td>${fmt(p.el, 1)}°</td></tr>` +
+      `<tr><td>Bearing</td><td>${fmt(p.az, 0)}°</td></tr>` +
+      `<tr><td>Skyline there</td><td>${fmt(horizonAt(p.az), 1)}°</td></tr>` +
+      `<tr><td>Status</td><td>${up ? "in sun" : "in shadow"}</td></tr></table>`,
+      e.clientX, e.clientY));
+    c.addEventListener("mouseleave", hideTip);
+    svg.appendChild(c);
+    svg.appendChild(el("text", { x: x(p.az), y: y(p.el) - 8, "text-anchor": "middle",
+      "font-size": 9, fill: up ? INK2 : MUTED, text: p.t.slice(0, 2) }));
+  }
+  return svg;
 }
 
 /* ---------- 35 years of climate ---------- */
@@ -2105,7 +2288,8 @@ function render() {
   hideTip();
   const host = $("#view");
   host.innerHTML = "";
-  const ownControls = tab === "plan" || tab === "model" || tab === "climate";
+  const ownControls = tab === "plan" || tab === "model" || tab === "climate"
+                      || tab === "sun";
   $("#resortCtl").style.display =
     (tab === "compare" || tab === "wind" || tab === "climate") ? "" : "none";
   $("#rangeCtl").style.display = ownControls ? "none" : "";
@@ -2115,7 +2299,7 @@ function render() {
   try {
     ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
        lifts: renderLifts, league: renderLeague, plan: renderPlan,
-       scatter: renderScatter, climate: renderClimate,
+       scatter: renderScatter, climate: renderClimate, sun: renderSun,
        model: renderModel })[tab](host);
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));

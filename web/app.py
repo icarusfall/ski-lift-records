@@ -12,7 +12,7 @@ import os
 import sys
 import re
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 # Allow importing scraper package from parent directory
@@ -629,6 +629,64 @@ def api_pistes(resort_id: str):
         })
     resp = jsonify({"type": "FeatureCollection", "features": features})
     resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@app.route("/api/sun/<resort_id>.json")
+def api_sun(resort_id: str):
+    """When each lift station gains and loses the sun on a given date.
+
+    The horizon profiles are precomputed; everything here is arithmetic, so a
+    different date costs nothing but the walk through the day.
+    """
+    from scraper import sun as sunmod
+
+    raw = (request.args.get("date") or "").strip()
+    try:
+        day = date.fromisoformat(raw) if raw else date(date.today().year, 2, 14)
+    except ValueError:
+        day = date(date.today().year, 2, 14)
+
+    with cursor() as cur:
+        cur.execute("""
+            SELECT name, kind, latitude, longitude, elevation_m, horizon,
+                   azimuth_step
+            FROM sun_points WHERE resort_id = %s
+            ORDER BY elevation_m DESC NULLS LAST
+        """, (resort_id,))
+        rows = cur.fetchall()
+
+    points = []
+    for r in rows:
+        prof = r["horizon"] if isinstance(r["horizon"], list) else json.loads(r["horizon"])
+        lat, lon = float(r["latitude"]), float(r["longitude"])
+        w = sunmod.sun_windows(lat, lon, prof, day)
+        points.append({
+            "name": r["name"] or "—", "kind": r["kind"],
+            "lat": lat, "lon": lon, "elevation_m": r["elevation_m"],
+            "azimuth_step": r["azimuth_step"], "horizon": prof,
+            **w,
+        })
+
+    # The sun's own track for the day, so the page can draw it against a
+    # horizon: elevation and azimuth every ten minutes, at the resort centre.
+    track = []
+    if points:
+        lat0 = sum(p["lat"] for p in points) / len(points)
+        lon0 = sum(p["lon"] for p in points) / len(points)
+        t = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        stop = t + timedelta(days=1)
+        while t < stop:
+            az, elev = sunmod.solar_position(lat0, lon0, t)
+            if elev > -2:
+                local = t + timedelta(hours=sunmod.cet_offset(t))
+                track.append({"t": local.strftime("%H:%M"),
+                              "az": round(az, 2), "el": round(elev, 2)})
+            t += timedelta(minutes=10)
+
+    resp = jsonify({"resort_id": resort_id, "date": day.isoformat(),
+                    "points": points, "track": track})
+    resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
 

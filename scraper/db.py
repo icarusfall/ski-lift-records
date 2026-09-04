@@ -380,6 +380,25 @@ CREATE INDEX IF NOT EXISTS idx_piste_geometry_resort ON piste_geometry (resort_i
 -- Sampled from a local SRTM tile rather than queried in the browser, where
 -- queryTerrainElevation returns null and killed the strung-cable rendering.
 ALTER TABLE lift_geometry ADD COLUMN IF NOT EXISTS elevations JSONB;
+
+-- Where the terrain skyline sits, seen from one point: `horizon` holds the
+-- angle up to the highest ground in each compass direction, every
+-- `azimuth_step` degrees starting at north. Built once from the local DEM;
+-- the sun is up whenever it clears the value for its own bearing.
+CREATE TABLE IF NOT EXISTS sun_points (
+    id           SERIAL PRIMARY KEY,
+    resort_id    VARCHAR(50) NOT NULL REFERENCES resorts(id),
+    kind         VARCHAR(8) NOT NULL,          -- 'base' or 'top'
+    name         VARCHAR(200),
+    latitude     NUMERIC(9,6) NOT NULL,
+    longitude    NUMERIC(9,6) NOT NULL,
+    elevation_m  INTEGER,
+    azimuth_step SMALLINT NOT NULL,
+    horizon      JSONB NOT NULL,
+    built_at     TIMESTAMP DEFAULT NOW(),
+    UNIQUE (resort_id, latitude, longitude)
+);
+CREATE INDEX IF NOT EXISTS idx_sun_points_resort ON sun_points (resort_id);
 """
 
 
