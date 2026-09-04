@@ -510,6 +510,8 @@ def api_climate():
             "freezing_m": round(top + t / LAPSE_C_PER_KM * 1000) if top else None,
         })
 
+    _attach_stations(out, start, end)
+
     resp = jsonify({
         "window": {"from": start, "to": end},
         "lapse_c_per_km": LAPSE_C_PER_KM,
@@ -517,6 +519,74 @@ def api_climate():
     })
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
+
+
+def _months_spanned(start: str, end: str) -> list[int]:
+    """Months a MM-DD window touches, wrapping the new year if it must."""
+    a, b = int(start[:2]), int(end[:2])
+    if a <= b:
+        return list(range(a, b + 1))
+    return list(range(a, 13)) + list(range(1, b + 1))
+
+
+def _attach_stations(out: dict, start: str, end: str) -> None:
+    """Add measured station series beside the modelled ones.
+
+    Daily stations are windowed on the exact calendar dates. Monthly stations
+    cannot be: their rows sit on the first of the month, so a 14-22 February
+    window would match nothing at all. They are therefore aggregated over the
+    whole months the window touches, which is a coarser question — the payload
+    says which each series is so the page can label it rather than quietly
+    mixing the two.
+    """
+    daily_window = ("TO_CHAR(ss.date, 'MM-DD') BETWEEN %(a)s AND %(b)s"
+                    if start <= end
+                    else "(TO_CHAR(ss.date, 'MM-DD') >= %(a)s"
+                         " OR TO_CHAR(ss.date, 'MM-DD') <= %(b)s)")
+    params = {"a": start, "b": end, "months": tuple(_months_spanned(start, end))}
+
+    with cursor() as cur:
+        cur.execute(f"""
+            SELECT rs.resort_id, rs.station_id, rs.rank, rs.chosen,
+                   rs.distance_km, rs.elev_diff_m,
+                   s.elevation_m, s.cadence, s.provider,
+                   (EXTRACT(YEAR FROM ss.date)
+                    - CASE WHEN EXTRACT(MONTH FROM ss.date) >= 8 THEN 0 ELSE 1 END)::int
+                       AS season,
+                   COUNT(*) AS n,
+                   AVG(ss.hs_cm) AS hs,
+                   SUM(ss.hn_cm) AS hn
+            FROM resort_stations rs
+            JOIN snow_stations s ON s.id = rs.station_id
+            JOIN station_snow ss ON ss.station_id = rs.station_id
+            WHERE (s.cadence = 'daily'  AND {daily_window})
+               OR (s.cadence = 'monthly' AND EXTRACT(MONTH FROM ss.date) IN %(months)s)
+            GROUP BY rs.resort_id, rs.station_id, rs.rank, rs.chosen,
+                     rs.distance_km, rs.elev_diff_m, s.elevation_m, s.cadence,
+                     s.provider, season
+            ORDER BY rs.resort_id, rs.rank, season
+        """, params)
+        rows = cur.fetchall()
+
+    for r in rows:
+        block = out.get(r["resort_id"])
+        if not block:
+            continue
+        stations = block.setdefault("stations", {})
+        st = stations.setdefault(r["station_id"], {
+            "id": r["station_id"], "rank": r["rank"], "primary": r["chosen"],
+            "elevation_m": r["elevation_m"], "cadence": r["cadence"],
+            "provider": r["provider"], "distance_km": _plain(r["distance_km"]),
+            "elev_diff_m": r["elev_diff_m"], "years": [],
+        })
+        st["years"].append({
+            "season": r["season"], "n": r["n"],
+            "hs_cm": round(float(r["hs"]), 1) if r["hs"] is not None else None,
+            "hn_cm": round(float(r["hn"]), 1) if r["hn"] is not None else None,
+        })
+    for block in out.values():
+        block["stations"] = sorted(block.get("stations", {}).values(),
+                                   key=lambda s: s["rank"])
 
 
 @app.route("/api/outlook.json")

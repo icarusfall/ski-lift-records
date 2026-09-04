@@ -916,7 +916,11 @@ const CLIMATE_PRESETS = [
   ["Easter-ish",      "04-01", "04-08"],
 ];
 let CLIM = null, climLoading = false;
-let clim = { from: "02-14", to: "02-22", metric: "snow_depth", span: 8 };
+let clim = { from: "02-14", to: "02-22", metric: "snow_depth", span: 8,
+             stations: true };
+// Which station field stands in for each modelled metric. Anything absent here
+// has no measured counterpart, so the stations control is hidden for it.
+const STATION_FIELD = { snow_depth: "hs_cm", snowfall: "hn_cm" };
 
 function climKey() { return clim.from + "_" + clim.to; }
 function loadClimate() {
@@ -1031,9 +1035,42 @@ function renderClimate(host) {
                + "all year, so those seasons are withheld rather than plotted. It affects "
                + "very few resorts — but Cervinia is one of them, which is a nuisance given "
                + "it is the resort this whole project is about."
+               + (clim.stations
+                  ? " The measured weather stations below cover it instead, which is "
+                    + "much of the reason they were added."
+                  : " Ticking “measured weather stations” below covers it another way.")
              : "") }));
   }
-  if (!series.length) return;
+  // Deliberately no early return here. Cervinia has no modelled snow depth at
+  // all — the glacier ceiling nulls it — and measured stations are the only
+  // series it can ever have, so bailing on an empty modelled set would hide
+  // exactly the data that fills the gap.
+
+  // Measured station series, drawn beside the modelled one rather than
+  // instead of it. Secondary stations only appear for a single resort —
+  // six resorts times four stations is twenty-four lines and no insight.
+  const field = STATION_FIELD[clim.metric];
+  const stationSeries = [];
+  if (field && clim.stations) {
+    for (const id of picks) {
+      const all = CLIM.resorts[id].stations || [];
+      const wanted = picks.length === 1 ? all : all.filter(s => s.primary);
+      for (const st of wanted) {
+        const pts = st.years.filter(y => y[field] != null)
+          .map(y => ({ x: y.season, y: Number(y[field]), n: y.n }));
+        if (pts.length > 4)
+          stationSeries.push({ id, station: st, pts,
+                               colour: SERIES[slotOf.get(id) ?? 0] });
+      }
+    }
+  }
+
+  if (!series.length && !stationSeries.length) {
+    host.appendChild(el("p", { class: "sub",
+      text: "Nothing to plot for that window — no modelled values and no "
+          + "measured station covers it." }));
+    return;
+  }
 
   const lg = el("div", { class: "legend" });
   for (const s of series) {
@@ -1042,8 +1079,19 @@ function renderClimate(host) {
     lg.appendChild(item);
   }
   host.appendChild(lg);
-  host.appendChild(climateChart(series, M));
-  host.appendChild(decadeTable(series, M));
+  if (field) {
+    const box = el("input", { type: "checkbox" });
+    box.checked = clim.stations;
+    box.addEventListener("change", () => { clim.stations = box.checked; render(); });
+    host.appendChild(el("label", { class: "hint",
+      style: "display:flex;gap:0.35rem;align-items:center;margin:0.2rem 0 0.4rem;" },
+      box, document.createTextNode(
+        "Show measured weather stations — solid, against the dashed modelled line"
+        + (picks.length === 1 ? "" : " (select one resort to see its older stations too)"))));
+  }
+  host.appendChild(climateChart(series, M, stationSeries));
+  host.appendChild(decadeTable(series, M, stationSeries));
+  if (stationSeries.length) host.appendChild(stationKey(stationSeries));
   host.appendChild(el("p", { class: "hint",
     text: (clim.metric === "freezing_m"
       ? "The freezing level is estimated, not observed: it is where 0 °C falls, from each "
@@ -1062,10 +1110,10 @@ function renderClimate(host) {
         + "and “Snow depth (valley)”." }));
 }
 
-function climateChart(series, M) {
+function climateChart(series, M, stationSeries = []) {
   const w = Math.max(620, ($("#view").clientWidth || 900) - 40), h = 380;
   const m = { l: 58, r: 16, t: 14, b: 46, w, h };
-  const all = series.flatMap(s => s.pts);
+  const all = series.flatMap(s => s.pts).concat(stationSeries.flatMap(s => s.pts));
   const xs = all.map(p => p.x), ys = all.map(p => p.y);
   const xDom = [Math.min(...xs), Math.max(...xs)];
   const yDom = domainOf(ys);
@@ -1099,17 +1147,25 @@ function climateChart(series, M) {
       text: series[0].name + " summit, " + summit + " m" }));
   }
 
+  // Modelled first and underneath. When measured stations are present it is
+  // drawn hollow and dashed, so the eye reads the solid lines as the
+  // observations and this as the estimate it is.
+  const hasMeasured = stationSeries.length > 0;
   for (const s of series) {
     const colour = SERIES[slotOf.get(s.id) ?? 0];
     const sorted = s.pts.slice().sort((a, b) => a.x - b.x);
     svg.appendChild(el("path", { fill: "none", stroke: colour, "stroke-width": 1.2,
-      "stroke-opacity": 0.45,
+      "stroke-opacity": hasMeasured ? 0.35 : 0.45,
+      "stroke-dasharray": hasMeasured ? "4 3" : "",
       d: "M" + sorted.map(p => `${x(p.x).toFixed(1)},${y(p.y).toFixed(1)}`).join("L") }));
     for (const p of sorted) {
-      const c = el("circle", { cx: x(p.x).toFixed(1), cy: y(p.y).toFixed(1), r: 3.4,
-        fill: colour, stroke: SURF, "stroke-width": 1.2 });
+      const c = el("circle", { cx: x(p.x).toFixed(1), cy: y(p.y).toFixed(1),
+        r: hasMeasured ? 2.8 : 3.4,
+        fill: hasMeasured ? SURF : colour, stroke: colour,
+        "stroke-width": hasMeasured ? 1.4 : 1.2 });
       c.addEventListener("mousemove", e => showTip(
-        `<div class="t-date">${s.name}</div><div class="t-sub">${seasonLabel(p.x)}</div>` +
+        `<div class="t-date">${s.name}</div>` +
+        `<div class="t-sub">${seasonLabel(p.x)} · modelled (ERA5, summit)</div>` +
         `<table><tr><td>${M.label}</td><td>${fmt(p.y, M.dp)} ${M.unit}</td></tr>` +
         `<tr><td>Days averaged</td><td>${p.n}</td></tr></table>`, e.clientX, e.clientY));
       c.addEventListener("mouseleave", hideTip);
@@ -1119,19 +1175,85 @@ function climateChart(series, M) {
     if (t) svg.appendChild(el("line", { x1: x(xDom[0]), x2: x(xDom[1]),
       y1: y(t.slope * xDom[0] + t.intercept), y2: y(t.slope * xDom[1] + t.intercept),
       stroke: colour, "stroke-width": t.significant ? 2.6 : 1.6,
+      "stroke-opacity": hasMeasured ? 0.4 : 1,
       "stroke-dasharray": t.significant ? "" : "5 4" }));
+  }
+
+  // Measured stations. Same hue as the resort — they are the same place — but
+  // the primary station is solid and full strength while older, closed
+  // stations are thinner and paler, so they read as related, not identical.
+  for (const s of stationSeries) {
+    const first = s.station.primary;
+    const sorted = s.pts.slice().sort((a, b) => a.x - b.x);
+    const op = first ? 1 : 0.5;
+    svg.appendChild(el("path", { fill: "none", stroke: s.colour,
+      "stroke-width": first ? 2 : 1.1, "stroke-opacity": op,
+      "stroke-dasharray": first ? "" : "1 2",
+      d: "M" + sorted.map(p => `${x(p.x).toFixed(1)},${y(p.y).toFixed(1)}`).join("L") }));
+    for (const p of sorted) {
+      const c = el("circle", { cx: x(p.x).toFixed(1), cy: y(p.y).toFixed(1),
+        r: first ? 3.2 : 2, fill: s.colour, "fill-opacity": op,
+        stroke: SURF, "stroke-width": 1 });
+      c.addEventListener("mousemove", e => showTip(
+        `<div class="t-date">${s.station.id.replace(/_/g, " ")}</div>` +
+        `<div class="t-sub">${seasonLabel(p.x)} · measured · ` +
+        `${s.station.elevation_m} m · ${s.station.cadence}` +
+        `${first ? "" : " · older station"}</div>` +
+        `<table><tr><td>${M.label}</td><td>${fmt(p.y, M.dp)} ${M.unit}</td></tr>` +
+        `<tr><td>${s.station.cadence === "daily" ? "Days" : "Months"} averaged</td>` +
+        `<td>${p.n}</td></tr>` +
+        `<tr><td>From resort</td><td>${fmt(s.station.distance_km, 1)} km</td></tr>` +
+        `</table>`, e.clientX, e.clientY));
+      c.addEventListener("mouseleave", hideTip);
+      svg.appendChild(c);
+    }
   }
   return svg;
 }
 
-function decadeTable(series, M) {
+/* Which station is which, since the chart deliberately reuses the resort's
+   colour for all of its sources. */
+function stationKey(stationSeries) {
+  const box = el("div", { class: "hint", style: "margin-top:0.4rem;" });
+  box.appendChild(el("div", { text: "Measured stations, in order of preference:" }));
+  for (const s of stationSeries) {
+    const yrs = s.pts.map(p => p.x);
+    const line = el("div", { style: "margin-left:0.6rem;" });
+    const sw = el("span", { class: "sw" });
+    sw.style.background = s.colour;
+    sw.style.opacity = s.station.primary ? "1" : "0.5";
+    line.appendChild(sw);
+    line.appendChild(document.createTextNode(
+      s.station.id.replace(/_/g, " ") + " — " + s.station.elevation_m + " m, "
+      + fmt(s.station.distance_km, 1) + " km away, " + s.station.cadence
+      + ", " + seasonLabel(Math.min(...yrs)) + " to " + seasonLabel(Math.max(...yrs))
+      + (s.station.primary ? " (primary)" : " (older station, drawn faint)")));
+    box.appendChild(line);
+  }
+  box.appendChild(el("div", { style: "margin-top:0.3rem;",
+    text: "Separate stations are never joined into one line: they sit at "
+        + "different heights, so a splice would invent a step change that looks "
+        + "exactly like a climate signal. Monthly stations average whole months, "
+        + "so their value covers more than the chosen window." }));
+  return box;
+}
+
+function decadeTable(series, M, stationSeries = []) {
   const t = el("table", { class: "league" });
   t.appendChild(el("thead", {}, el("tr", {},
-    el("th", { text: "resort" }), el("th", { text: "first 10 seasons" }),
+    el("th", { text: "series" }), el("th", { text: "first 10 seasons" }),
     el("th", { text: "last 10 seasons" }), el("th", { text: "change" }),
     el("th", { text: "trend per decade" }), el("th", { text: "95% interval" }))));
   const tb = el("tbody");
-  for (const s of series) {
+  // Only the primary measured station gets a row; the older ones are context
+  // on the chart, not numbers to quote.
+  const rows = series.map(s => ({ ...s, kind: "modelled",
+      name: stationSeries.length ? s.name + " (modelled)" : s.name }))
+    .concat(stationSeries.filter(s => s.station.primary).map(s => ({
+      name: s.station.id.replace(/_/g, " ") + " (measured, "
+            + s.station.elevation_m + " m)",
+      pts: s.pts, kind: "measured" })));
+  for (const s of rows) {
     const sorted = s.pts.slice().sort((a, b) => a.x - b.x);
     const mean = g => g.reduce((a, p) => a + p.y, 0) / g.length;
     const early = mean(sorted.slice(0, 10)), late = mean(sorted.slice(-10));
