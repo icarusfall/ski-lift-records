@@ -26,7 +26,8 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None,
                  temp_min_c, temp_max_c,
                  fresh_snow_cm, precipitation_mm, weather_code,
                  sunshine_hours, freezing_level_max_m, freezing_level_min_m,
-                 wind_700hpa_max_kmh, slot)
+                 wind_700hpa_max_kmh, wind_dir_dominant_deg,
+                 wind_700hpa_dir_deg, slot)
             VALUES
                 (%(resort_id)s, %(now)s, %(date)s,
                  %(lifts_open)s, %(lifts_total)s, %(pct_open)s,
@@ -38,7 +39,7 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None,
                  %(temp_min)s, %(temp_max)s,
                  %(fresh_snow)s, %(precipitation)s, %(weather_code)s,
                  %(sunshine)s, %(fl_max)s, %(fl_min)s,
-                 %(wind700)s, %(slot)s)
+                 %(wind700)s, %(wind_dir)s, %(wind700_dir)s, %(slot)s)
             ON CONFLICT (resort_id, snapshot_date, slot) DO UPDATE SET
                 snapshot_time          = EXCLUDED.snapshot_time,
                 lifts_open             = EXCLUDED.lifts_open,
@@ -64,7 +65,9 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None,
                 sunshine_hours         = EXCLUDED.sunshine_hours,
                 freezing_level_max_m   = EXCLUDED.freezing_level_max_m,
                 freezing_level_min_m   = EXCLUDED.freezing_level_min_m,
-                wind_700hpa_max_kmh    = EXCLUDED.wind_700hpa_max_kmh
+                wind_700hpa_max_kmh    = EXCLUDED.wind_700hpa_max_kmh,
+                wind_dir_dominant_deg  = EXCLUDED.wind_dir_dominant_deg,
+                wind_700hpa_dir_deg    = EXCLUDED.wind_700hpa_dir_deg
             RETURNING id
         """, {
             "resort_id":     snap.resort_id,
@@ -96,6 +99,8 @@ def save_snapshot(snap: ResortSnapshot, snapshot_date: date | None = None,
             "fl_max":              snap.freezing_level_max_m,
             "fl_min":              snap.freezing_level_min_m,
             "wind700":             snap.wind_700hpa_max_kmh,
+            "wind_dir":            snap.wind_dir_dominant_deg,
+            "wind700_dir":         snap.wind_700hpa_dir_deg,
             "slot":                slot,
         })
         row = cur.fetchone()

@@ -150,6 +150,8 @@ def collect_all(resort_filter: str | None = None, slot: str = "midday",
                 snap.freezing_level_max_m = weather.get("freezing_level_max_m")
                 snap.freezing_level_min_m = weather.get("freezing_level_min_m")
                 snap.wind_700hpa_max_kmh  = weather.get("wind_700hpa_max_kmh")
+                snap.wind_dir_dominant_deg = weather.get("wind_dir_dominant_deg")
+                snap.wind_700hpa_dir_deg   = weather.get("wind_700hpa_dir_deg")
 
             snapshot_id = save_snapshot(snap, today, slot)
 

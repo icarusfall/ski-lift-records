@@ -107,6 +107,8 @@ class ResortSnapshot:
     freezing_level_max_m: Optional[int] = None
     freezing_level_min_m: Optional[int] = None
     wind_700hpa_max_kmh: Optional[float] = None
+    wind_dir_dominant_deg: Optional[int] = None
+    wind_700hpa_dir_deg: Optional[int] = None
     error: Optional[str] = None
     source_readings: list["SourceReading"] = field(default_factory=list)
 

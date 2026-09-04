@@ -6,6 +6,7 @@ API_URL = "https://api.open-meteo.com/v1/forecast"
 DAILY_FIELDS = [
     "wind_gusts_10m_max",
     "wind_speed_10m_max",
+    "wind_direction_10m_dominant",
     "temperature_2m_min",
     "temperature_2m_max",
     "snowfall_sum",
@@ -20,6 +21,7 @@ DAILY_FIELDS = [
 HOURLY_FIELDS = [
     "freezing_level_height",
     "wind_speed_700hPa",
+    "wind_direction_700hPa",
 ]
 
 
@@ -50,6 +52,13 @@ def fetch_weather(latitude: float, longitude: float, elevation: int | None = Non
         return {
             "wind_gust_max_kmh":  _first(daily, "wind_gusts_10m_max"),
             "wind_speed_max_kmh": _first(daily, "wind_speed_10m_max"),
+            "wind_dir_dominant_deg": _round_deg(
+                _first(daily, "wind_direction_10m_dominant")),
+            # The direction at the hour the 700hPa wind actually peaked, not a
+            # daily average. Averaging a direction over a day that veers is
+            # close to meaningless, and it is the peak that shuts a lift.
+            "wind_700hpa_dir_deg": _round_deg(
+                _at_peak(hourly, "wind_speed_700hPa", "wind_direction_700hPa")),
             "temp_min_c":         _first(daily, "temperature_2m_min"),
             "temp_max_c":         _first(daily, "temperature_2m_max"),
             "fresh_snow_cm":      _first(daily, "snowfall_sum"),
@@ -73,3 +82,21 @@ def _first(daily: dict, key: str):
 def _values(hourly: dict, key: str) -> list[float]:
     """Non-null values from an hourly array."""
     return [v for v in hourly.get(key, []) if v is not None]
+
+
+def _at_peak(hourly: dict, magnitude_key: str, value_key: str):
+    """The value recorded at the hour `magnitude_key` was highest."""
+    mags = hourly.get(magnitude_key, [])
+    vals = hourly.get(value_key, [])
+    best, out = None, None
+    for m, v in zip(mags, vals):
+        if m is None or v is None:
+            continue
+        if best is None or m > best:
+            best, out = m, v
+    return out
+
+
+def _round_deg(v):
+    """Compass degrees as a whole number in [0, 360)."""
+    return None if v is None else round(v) % 360

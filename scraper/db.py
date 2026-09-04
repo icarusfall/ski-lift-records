@@ -141,6 +141,12 @@ ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS freezing_level_min_m INTEGER;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS wind_700hpa_max_kmh NUMERIC(5,1);
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS sunshine_hours NUMERIC(4,1);
 
+-- Wind direction, added 4 Sep 2026. Season 1 has none, which is why the
+-- crosswind hypothesis could only be tested against ERA5's 25 km daily
+-- dominant direction, and why that test came back null. See scraper/crosswind.py.
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS wind_dir_dominant_deg SMALLINT;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS wind_700hpa_dir_deg SMALLINT;
+
 -- Multiple captures per day: the old one-row-per-resort-per-day constraint is
 -- replaced by a unique index that includes the slot (morning / midday).
 ALTER TABLE snapshots DROP CONSTRAINT IF EXISTS snapshots_resort_id_snapshot_date_key;
