@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lift map — Ski Lift Tracker</title>
-<link href="https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.css" rel="stylesheet">
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.29.0/mapbox-gl.css" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -39,6 +39,11 @@
   .mapboxgl-popup-content td { padding: 1px 6px 1px 0; }
   .mapboxgl-popup-content td:last-child { font-variant-numeric: tabular-nums;
                                           font-weight: 600; }
+  button { border: 1px solid var(--grid); background: var(--surface); border-radius: 5px;
+           padding: 0.22rem 0.6rem; font-size: 0.8rem; color: var(--ink-2);
+           cursor: pointer; font-family: inherit; }
+  button:hover { border-color: var(--baseline); color: var(--ink); }
+  button.on { border-color: #2b6cb0; color: #2b6cb0; font-weight: 600; }
   .warn { padding: 1.5rem; font-size: 0.9rem; color: var(--ink-2); }
   .warn code { background: var(--grid); padding: 0 4px; border-radius: 3px; }
 </style>
@@ -69,7 +74,25 @@
     <label for="terrain">Terrain</label>
     <select id="terrain">
       <option value="1.4">3D</option>
+      <option value="2.2">3D, exaggerated</option>
       <option value="0">Flat</option>
+    </select>
+  </div>
+  <div>
+    <label for="look">Look</label>
+    <select id="look">
+      <option value="outdoors">Outdoors — contours &amp; trails</option>
+      <option value="day">Standard — day</option>
+      <option value="dusk">Standard — dusk</option>
+      <option value="dawn">Standard — dawn</option>
+      <option value="night">Standard — night</option>
+    </select>
+  </div>
+  <div>
+    <label for="cables">Cables</label>
+    <select id="cables">
+      <option value="strung">Strung at height</option>
+      <option value="draped">Draped on terrain</option>
     </select>
   </div>
   <div>
@@ -83,6 +106,7 @@
     <label for="wind">Gust</label>
     <input type="range" id="wind" min="20" max="130" step="5" value="70">
     <span id="windVal" style="font-variant-numeric:tabular-nums;">70 km/h</span>
+    <button id="blow" title="Sweep the wind from calm to severe">▶ Blow</button>
   </div>
   <div class="legend" id="legendRecord">
     <span>Days open:</span>
@@ -104,7 +128,7 @@
 <div id="map"></div>
 {% endif %}
 
-<script src="https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.js"></script>
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.29.0/mapbox-gl.js"></script>
 <script>
 "use strict";
 (function () {
@@ -177,6 +201,69 @@
   // finding. See the "what was tried and rejected" section in the explorer.
   var MODEL = null, modelPending = false;
   var OPEN = "#2a78d6", SHUT = "#e34948";
+
+  // ---- cables strung at height ----------------------------------------
+  // A cable does not follow the ground; it spans between towers. Draping the
+  // line on the DEM makes a gondola crawl into every hollow it actually flies
+  // over. These give it a straight span with clearance, dipping to follow the
+  // ground only where the ground rises into it.
+  var GEOJSON = null;
+  var TOWER_CLEARANCE_M = 25;   // rough height of cable above ground at a tower
+  var SAG_M = 12;               // mid-span dip, so it reads as a cable not a wire
+
+  function elevateCables() {
+    if (!GEOJSON || !map.getSource("lifts") || !map.getTerrain()) return false;
+    var complete = true;
+    GEOJSON.features.forEach(function (f) {
+      var c = f.geometry.coordinates;
+      var ground = c.map(function (p) {
+        // Exaggerated to match what is actually drawn: at 1.4x the terrain
+        // renders 40% taller, and a cable placed at true height would sink
+        // into the hillside.
+        return map.queryTerrainElevation({ lng: p[0], lat: p[1] });
+      });
+      if (ground.some(function (v) { return v == null; })) { complete = false; return; }
+      var n = ground.length;
+      var a = ground[0] + TOWER_CLEARANCE_M, b = ground[n - 1] + TOWER_CLEARANCE_M;
+      f.properties.elevation = ground.map(function (g, i) {
+        var t = n === 1 ? 0 : i / (n - 1);
+        var span = a + (b - a) * t - SAG_M * 4 * t * (1 - t);
+        // Never below the ground it crosses: a ridge mid-way pushes the
+        // cable up rather than swallowing it.
+        return Math.max(span, g + TOWER_CLEARANCE_M);
+      });
+    });
+    if (!complete) return false;
+    map.getSource("lifts").setData(GEOJSON);
+    return true;
+  }
+
+  function applyCableStyle() {
+    if (!map.getLayer("lifts-line")) return;
+    var strung = document.getElementById("cables").value === "strung"
+                 && map.getTerrain();
+    try {
+      if (strung && elevateCables()) {
+        var expr = ["at-interpolated",
+                    ["*", ["line-progress"],
+                     ["-", ["length", ["get", "elevation"]], 1]],
+                    ["get", "elevation"]];
+        ["lifts-line", "lifts-casing", "lifts-hit"].forEach(function (id) {
+          if (!map.getLayer(id)) return;
+          map.setLayoutProperty(id, "line-elevation-reference", "sea");
+          map.setLayoutProperty(id, "line-z-offset", expr);
+        });
+      } else {
+        ["lifts-line", "lifts-casing", "lifts-hit"].forEach(function (id) {
+          if (map.getLayer(id)) map.setLayoutProperty(id, "line-z-offset", 0);
+        });
+      }
+    } catch (e) {
+      // Older renderers have no line-z-offset. Draped is a fine map, so say
+      // it once in the console and carry on rather than breaking the page.
+      console.warn("elevated cables unavailable:", e && e.message);
+    }
+  }
 
   function bandFor(gust) {
     for (var i = 0; i < MODEL.bins.length; i++)
@@ -310,10 +397,13 @@
     fetch("/api/geometry/" + resortId + ".json")
       .then(function (r) { return r.json(); })
       .then(function (gj) {
+        GEOJSON = gj;
         var src = map.getSource("lifts");
         if (src) { src.setData(gj); }
         else {
-          map.addSource("lifts", { type: "geojson", data: gj });
+          // lineMetrics is required for line-progress, which is how the
+          // per-vertex elevation array is sampled along the cable.
+          map.addSource("lifts", { type: "geojson", data: gj, lineMetrics: true });
           // A wide, near-transparent casing gives a forgiving hit target and
           // keeps thin lines legible against busy terrain.
           map.addLayer({
@@ -375,17 +465,43 @@
         }
         applyColours();
         fitTo(gj);
+        // Terrain tiles for the new view are not loaded yet, and elevations
+        // cannot be queried until they are — so wait for the map to settle.
+        map.once("idle", applyCableStyle);
       });
   }
 
-  map.on("load", function () {
-    map.addSource("dem", {
-      type: "raster-dem",
-      url: "mapbox://mapbox.mapbox-terrain-dem-v1",
-      tileSize: 512, maxzoom: 14,
-    });
-    map.setTerrain({ source: "dem", exaggeration: 1.4 });
-    map.setFog({ "horizon-blend": 0.2, color: "#eef3f8", "high-color": "#cfe0f2" });
+  // Switching style throws away every source, layer and the terrain with it,
+  // so all of that is rebuilt on style.load rather than once on load — which
+  // fires for the first style too, so there is only one path to maintain.
+  var STYLES = {
+    outdoors: "mapbox://styles/mapbox/outdoors-v12",
+    standard: "mapbox://styles/mapbox/standard",
+  };
+  var lastStyleUrl = STYLES.outdoors;   // matches the constructor above
+  function currentExaggeration() {
+    return parseFloat(document.getElementById("terrain").value);
+  }
+  map.on("style.load", function () {
+    if (!map.getSource("dem")) {
+      map.addSource("dem", {
+        type: "raster-dem",
+        url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+        tileSize: 512, maxzoom: 14,
+      });
+    }
+    var ex = currentExaggeration();
+    map.setTerrain(ex ? { source: "dem", exaggeration: ex } : null);
+    var look = document.getElementById("look").value;
+    if (look === "outdoors") {
+      map.setFog({ "horizon-blend": 0.2, color: "#eef3f8", "high-color": "#cfe0f2" });
+    } else {
+      // Standard carries its own atmosphere per light preset; overriding the
+      // fog here would flatten exactly the dusk light we switched for.
+      try { map.setConfigProperty("basemap", "lightPreset", look); } catch (e) {
+        console.warn("lightPreset unsupported:", e && e.message);
+      }
+    }
     load(document.getElementById("resort").value);
   });
 
@@ -393,14 +509,60 @@
     load(e.target.value);
   });
   document.getElementById("mode").addEventListener("change", applyColours);
-  document.getElementById("wind").addEventListener("input", function (e) {
-    document.getElementById("windVal").textContent = e.target.value + " km/h";
+  var windEl = document.getElementById("wind");
+  function setWind(v) {
+    windEl.value = v;
+    document.getElementById("windVal").textContent = v + " km/h";
     applyColours();
+  }
+  windEl.addEventListener("input", function (e) { stopBlow(); setWind(+e.target.value); });
+
+  // Sweep the wind from calm to severe so the closure order plays out as
+  // motion rather than as a table. The model only knows four bands, so this
+  // is deliberately a sequence of steps: lifts go over in groups, which is
+  // what the ordering actually claims.
+  var blowTimer = null;
+  var blowBtn = document.getElementById("blow");
+  function stopBlow() {
+    if (blowTimer) { clearInterval(blowTimer); blowTimer = null; }
+    blowBtn.classList.remove("on");
+    blowBtn.textContent = "▶ Blow";
+  }
+  blowBtn.addEventListener("click", function () {
+    if (blowTimer) { stopBlow(); return; }
+    var lo = +windEl.min, hi = +windEl.max, step = +windEl.step;
+    var v = lo;
+    blowBtn.classList.add("on");
+    blowBtn.textContent = "■ Stop";
+    setWind(v);
+    blowTimer = setInterval(function () {
+      v += step;
+      if (v > hi) { stopBlow(); return; }
+      setWind(v);
+    }, 170);
   });
   document.getElementById("terrain").addEventListener("change", function (e) {
     var ex = parseFloat(e.target.value);
     map.setTerrain(ex ? { source: "dem", exaggeration: ex } : null);
     map.easeTo({ pitch: ex ? 58 : 0, duration: 600 });
+    // Exaggeration scales the rendered terrain, so the cable heights have to
+    // be requeried or they end up buried or floating.
+    map.once("idle", applyCableStyle);
+  });
+  document.getElementById("cables").addEventListener("change", applyCableStyle);
+
+  document.getElementById("look").addEventListener("change", function (e) {
+    var want = e.target.value === "outdoors" ? STYLES.outdoors : STYLES.standard;
+    // Re-setting the same style would tear down and rebuild everything for
+    // nothing, so a change between light presets only nudges the preset.
+    if (want === lastStyleUrl) {
+      try { map.setConfigProperty("basemap", "lightPreset", e.target.value); } catch (err) {
+        console.warn("lightPreset unsupported:", err && err.message);
+      }
+      return;
+    }
+    lastStyleUrl = want;
+    map.setStyle(want);
   });
 })();
 </script>
