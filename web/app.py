@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import io
 import json
+import math
 import os
 import sys
 import re
@@ -429,6 +430,18 @@ def api_model():
 # not an observed snow line, and the page says so.
 LAPSE_C_PER_KM = 6.5
 
+
+def _resort_centres():
+    """Resort coordinates from the roster config, memoised."""
+    global _CENTRES
+    if _CENTRES is None:
+        from scraper.collect import load_resorts
+        _CENTRES = [r for r in load_resorts() if r.get("latitude")]
+    return _CENTRES
+
+
+_CENTRES = None
+
 # ERA5's modelled snow depth is credible up to a few metres at a summit but
 # runs away over permanently glaciated cells, pinning at 33.33 m. Anything
 # above this is the glacier, not the winter's snowpack.
@@ -665,8 +678,21 @@ def api_sun(resort_id: str):
             "name": r["name"] or "—", "kind": r["kind"],
             "lat": lat, "lon": lon, "elevation_m": r["elevation_m"],
             "azimuth_step": r["azimuth_step"], "horizon": prof,
-            **w,
+            "centre": False, **w,
         })
+
+    # Mark the station nearest the resort's own coordinates. "Lowest station"
+    # is not the village: the OSM bounding box reaches down the valley, so
+    # Alpe d'Huez's lowest is Bourg-d'Oisans at 725 m and Val Thorens' is
+    # Moutiers at 882 m. Those really are dark in February, but they are not
+    # the resort anyone means.
+    centre = next((r for r in _resort_centres() if r["id"] == resort_id), None)
+    if centre and points:
+        def d2(p):
+            return ((p["lat"] - centre["latitude"]) ** 2
+                    + ((p["lon"] - centre["longitude"])
+                       * math.cos(math.radians(centre["latitude"]))) ** 2)
+        min(points, key=d2)["centre"] = True
 
     # The sun's own track for the day, so the page can draw it against a
     # horizon: elevation and azimuth every ten minutes, at the resort centre.

@@ -946,13 +946,11 @@ function renderSun(host) {
 
   const pts = SUN.points.slice().sort((a, b) => (a.hours - b.hours));
   if (!sunPoint || !pts.some(p => p.name === sunPoint.name && p.kind === sunPoint.kind)) {
-    // Open on the valley floor rather than on whichever station happens to be
-    // worst: the question this answers is about the village, and the lowest
-    // base station is the closest thing to it.
-    const bases = pts.filter(p => p.kind === "base" && p.elevation_m != null);
-    sunPoint = bases.length
-      ? bases.reduce((a, b) => (a.elevation_m <= b.elevation_m ? a : b))
-      : pts[0];
+    // Open on the station nearest the resort's own coordinates — the village.
+    // Not the lowest one: the lift bounding box reaches down the valley, so
+    // the lowest station at Alpe d'Huez is Bourg-d'Oisans and at Val Thorens
+    // is Moutiers, neither of which is the resort anyone means.
+    sunPoint = pts.find(p => p.centre) || pts[0];
   }
   const flat = pts.find(p => p.flat_first) || {};
   host.appendChild(el("p", { class: "sub",
