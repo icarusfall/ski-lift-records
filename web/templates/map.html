@@ -72,7 +72,19 @@
       <option value="0">Flat</option>
     </select>
   </div>
-  <div class="legend">
+  <div>
+    <label for="mode">Colour by</label>
+    <select id="mode">
+      <option value="record">What actually happened</option>
+      <option value="predict">What the model predicts</option>
+    </select>
+  </div>
+  <div id="windBox" style="display:none;">
+    <label for="wind">Gust</label>
+    <input type="range" id="wind" min="20" max="130" step="5" value="70">
+    <span id="windVal" style="font-variant-numeric:tabular-nums;">70 km/h</span>
+  </div>
+  <div class="legend" id="legendRecord">
     <span>Days open:</span>
     <span>0%</span>
     <span class="ramp" id="ramp"></span>
@@ -81,7 +93,14 @@
       <span class="sw" style="background:#898781"></span>no observations
     </span>
   </div>
+  <div class="legend" id="legendPredict" style="display:none;">
+    <span><span class="sw" style="background:#2a78d6"></span>running</span>
+    <span><span class="sw" style="background:#e34948"></span>shut</span>
+    <span><span class="sw" style="background:#898781"></span>not in the model</span>
+  </div>
 </div>
+<div id="predNote" class="warn" style="display:none;padding:0.6rem 1.2rem;
+     font-size:0.78rem;border-bottom:1px solid var(--grid);"></div>
 <div id="map"></div>
 {% endif %}
 
@@ -150,6 +169,122 @@
     var el = document.getElementById("map-error");
     if (el) el.remove();
   });
+
+  // ---- the model, on the map ------------------------------------------
+  // Layer 1 turns a gust into the share of the mountain still running; layer 2's
+  // closure ladder turns that share into named lifts. Wind SPEED only: direction
+  // was measured and adds nothing, so a direction dial would be inventing a
+  // finding. See the "what was tried and rejected" section in the explorer.
+  var MODEL = null, modelPending = false;
+  var OPEN = "#2a78d6", SHUT = "#e34948";
+
+  function bandFor(gust) {
+    for (var i = 0; i < MODEL.bins.length; i++)
+      if (gust < MODEL.bins[i].upper) return MODEL.bins[i].name;
+    return MODEL.bins[MODEL.bins.length - 1].name;
+  }
+
+  function predictShut(resortId, gust) {
+    var R = MODEL && MODEL.resorts[resortId];
+    if (!R) return null;
+    var band = R.response[bandFor(gust)];
+    if (!band) return null;
+    var n = R.ladder.length;
+    // Expected share open -> a count -> the identities of that many lifts. The
+    // ladder is ordered first-to-shut, so the survivors are the tail.
+    var open = Math.round(band.pct_open / 100 * n);
+    var shut = {};
+    for (var i = 0; i < n - open; i++) shut[R.ladder[i].name] = true;
+    return { shut: shut, pctOpen: band.pct_open, openCount: open, total: n,
+             thin: band.shrunk, verdict: R.verdict, days: band.n,
+             band: bandFor(gust) };
+  }
+
+  function predictExpression(resortId, gust) {
+    var p = predictShut(resortId, gust);
+    if (!p) return NO_DATA;
+    // match on the observed lift name each way was matched to; anything with no
+    // match, or absent from the ladder, stays neutral rather than guessing.
+    var expr = ["match", ["get", "lift_name"]];
+    var names = Object.keys(p.shut);
+    if (names.length) expr = expr.concat([names, SHUT]);
+    var openNames = [];
+    for (var i = 0; i < MODEL.resorts[resortId].ladder.length; i++) {
+      var nm = MODEL.resorts[resortId].ladder[i].name;
+      if (!p.shut[nm]) openNames.push(nm);
+    }
+    if (openNames.length) expr = expr.concat([openNames, OPEN]);
+    expr.push(NO_DATA);
+    return names.length || openNames.length ? expr : NO_DATA;
+  }
+
+  // The controls must respond whether or not the geometry has arrived yet, so
+  // only the paint call is guarded on the layer existing — not the whole
+  // function, which would leave the mode switch looking broken while loading.
+  function paint(colour) {
+    if (map.getLayer("lifts-line"))
+      map.setPaintProperty("lifts-line", "line-color", colour);
+  }
+
+  function applyColours() {
+    var rid = document.getElementById("resort").value;
+    var mode = document.getElementById("mode").value;
+    var note = document.getElementById("predNote");
+    document.getElementById("legendRecord").style.display =
+      mode === "predict" ? "none" : "";
+    document.getElementById("legendPredict").style.display =
+      mode === "predict" ? "" : "none";
+    document.getElementById("windBox").style.display =
+      mode === "predict" ? "" : "none";
+
+    if (mode !== "predict") {
+      note.style.display = "none";
+      paint(colourExpression());
+      return;
+    }
+    if (!MODEL) {
+      note.style.display = "";
+      note.textContent = "Working out the model…";
+      if (!modelPending) {
+        modelPending = true;
+        fetch("/api/model.json").then(function (r) { return r.json(); })
+          .then(function (d) { MODEL = d; modelPending = false; applyColours(); })
+          .catch(function (e) {
+            modelPending = false;
+            note.textContent = "Could not load the model: " + e.message;
+          });
+      }
+      return;
+    }
+    var gust = +document.getElementById("wind").value;
+    var p = predictShut(rid, gust);
+    note.style.display = "";
+    if (!p) {
+      paint(NO_DATA);
+      note.textContent = "This resort has no per-lift history — it is scraped from "
+        + "bergfex, which reports a lift count and nothing else — so there is no "
+        + "closure order to predict from.";
+      return;
+    }
+    paint(predictExpression(rid, gust));
+    var caveat = p.verdict.indexOf("not nested") === 0
+      ? " This resort's closures are NOT well ordered (" + p.verdict + "), so which "
+        + "lifts go red is unreliable even though the count is not."
+      : (p.verdict.indexOf("thin") >= 0
+         ? " The order for this resort rests on few partly-open days, so treat the "
+           + "individual lifts as a hint."
+         : "");
+    // The model knows four wind bands, not a continuum, so the slider steps
+    // rather than glides. Naming the band explains that instead of leaving it
+    // looking stuck, and interpolating would invent precision it does not have.
+    note.textContent = "At a " + gust + " km/h gust — the “" + p.band
+      + "” band — the model expects " + p.pctOpen.toFixed(0)
+      + "% of lifts running, about " + p.openCount + " of " + p.total
+      + ". Estimated from " + p.days + " observed day"
+      + (p.days === 1 ? "" : "s") + " in that band"
+      + (p.thin ? ", pulled toward the all-resort average because that is thin" : "")
+      + "." + caveat;
+  }
 
   function colourExpression() {
     // Interpolate the ramp over 0-100%, with unmatched lifts falling through
@@ -238,6 +373,7 @@
             popup.remove();
           });
         }
+        applyColours();
         fitTo(gj);
       });
   }
@@ -255,6 +391,11 @@
 
   document.getElementById("resort").addEventListener("change", function (e) {
     load(e.target.value);
+  });
+  document.getElementById("mode").addEventListener("change", applyColours);
+  document.getElementById("wind").addEventListener("input", function (e) {
+    document.getElementById("windVal").textContent = e.target.value + " km/h";
+    applyColours();
   });
   document.getElementById("terrain").addEventListener("change", function (e) {
     var ex = parseFloat(e.target.value);
