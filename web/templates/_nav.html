@@ -1,0 +1,24 @@
+{# One header for every page. Set `active` before including it:
+   {% set active = "map" %}{% include "_nav.html" %}
+   It is a <nav>, not a <header>, so each page's own header rules leave it alone. #}
+<style>
+  .site-nav { background: #2b6cb0; color: white; padding: 0.7rem 1.5rem;
+              display: flex; align-items: center; gap: 0.4rem 1.6rem; flex-wrap: wrap;
+              font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .site-nav .brand { color: white; font-size: 1.1rem; font-weight: 700;
+                     text-decoration: none; margin-right: auto; white-space: nowrap; }
+  .site-nav .links { display: flex; gap: 0.2rem; flex-wrap: wrap; }
+  .site-nav .links a { color: #dbeafe; font-size: 0.88rem; text-decoration: none;
+                       padding: 0.3rem 0.75rem; border-radius: 999px; white-space: nowrap; }
+  .site-nav .links a:hover { background: rgba(255,255,255,0.14); color: white; }
+  .site-nav .links a.on { background: white; color: #2b6cb0; font-weight: 600; }
+</style>
+<nav class="site-nav">
+  <a class="brand" href="/">⛷ Ski Lift Records</a>
+  <div class="links">
+    <a href="/map" class="{{ 'on' if active == 'map' }}">Map</a>
+    <a href="/resorts" class="{{ 'on' if active == 'resorts' }}">Resorts</a>
+    <a href="/explore" class="{{ 'on' if active == 'explore' }}">Explore the data</a>
+    <a href="/explore#tab=model" class="{{ 'on' if active == 'model' }}">How it works</a>
+  </div>
+</nav>

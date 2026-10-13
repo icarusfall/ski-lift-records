@@ -79,9 +79,14 @@ def get_latest_snapshots():
         return cur.fetchall()
 
 
+# Readings taken between June and October are scraper tests run while
+# collection was paused, not a season, and must not pass for one.
+IN_SEASON = "EXTRACT(MONTH FROM snapshot_date) NOT BETWEEN 6 AND 10"
+
+
 def get_history(resort_id: str, days: int = 60):
     with cursor() as cur:
-        cur.execute("""
+        cur.execute(f"""
             SELECT * FROM (
                 SELECT DISTINCT ON (snapshot_date)
                        snapshot_date, lifts_open, lifts_total, pct_lifts_open,
@@ -96,19 +101,24 @@ def get_history(resort_id: str, days: int = 60):
                        MIN(pct_lifts_open) OVER (PARTITION BY snapshot_date) AS pct_min_day
                 FROM snapshots
                 WHERE resort_id = %s
-                  AND snapshot_date >= CURRENT_DATE - %s
+                  -- counted back from this resort's last reading of a season
+                  -- rather than from today, so the page is not blank all summer
+                  AND snapshot_date BETWEEN (SELECT MAX(snapshot_date) FROM snapshots
+                                             WHERE resort_id = %s AND {IN_SEASON}) - %s
+                                        AND (SELECT MAX(snapshot_date) FROM snapshots
+                                             WHERE resort_id = %s AND {IN_SEASON})
                 -- one row per day: the midday capture is the canonical one,
                 -- so it stays comparable with the single-capture season 1
                 ORDER BY snapshot_date, (slot <> 'midday'), snapshot_time DESC
             ) d ORDER BY snapshot_date
-        """, (resort_id, days))
+        """, (resort_id, resort_id, days, resort_id))
         return cur.fetchall()
 
 
 def get_lift_history(resort_id: str, days: int = 60):
     """Per-lift open/closed history for a resort (primary scrapers only)."""
     with cursor() as cur:
-        cur.execute("""
+        cur.execute(f"""
             SELECT
                 l.name,
                 l.is_link,
@@ -118,10 +128,14 @@ def get_lift_history(resort_id: str, days: int = 60):
             JOIN lifts l ON l.id = lr.lift_id
             JOIN snapshots s ON s.id = lr.snapshot_id
             WHERE l.resort_id = %s
-              AND s.snapshot_date >= CURRENT_DATE - %s
+              AND s.snapshot_date BETWEEN
+                    (SELECT MAX(snapshot_date) FROM snapshots
+                      WHERE resort_id = %s AND {IN_SEASON}) - %s
+                AND (SELECT MAX(snapshot_date) FROM snapshots
+                      WHERE resort_id = %s AND {IN_SEASON})
               AND NOT l.name LIKE 'lift\\_%%'
             ORDER BY l.name, s.snapshot_date
-        """, (resort_id, days))
+        """, (resort_id, resort_id, days, resort_id))
         return cur.fetchall()
 
 
@@ -144,23 +158,78 @@ def collection_status() -> dict:
     }
 
 
+# Named weeks people actually book. The explorer carries the same list; the
+# two are short enough that sharing them is not worth a round trip.
+TRIP_WEEKS = [
+    ("Christmas", "12-20", "12-27"),
+    ("New Year", "12-28", "01-04"),
+    ("Mid-January", "01-10", "01-17"),
+    ("Feb half-term", "02-14", "02-22"),
+    ("Late February", "02-23", "03-02"),
+    ("Mid-March", "03-10", "03-17"),
+    ("Easter-ish", "04-01", "04-08"),
+]
+_MD = re.compile(r"\d{2}-\d{2}")
+
+
+def _trip_window():
+    """The from/to a page was asked for, falling back to February half-term."""
+    a, b = request.args.get("from", ""), request.args.get("to", "")
+    if _MD.fullmatch(a) and _MD.fullmatch(b):
+        return a, b
+    return "02-14", "02-22"
+
+
 @app.route("/")
 def index():
+    with cursor() as cur:
+        cur.execute("SELECT id, name, country FROM resorts ORDER BY name")
+        resorts = cur.fetchall()
+        cur.execute(f"""
+            SELECT MIN(snapshot_date) AS first, MAX(snapshot_date) AS last,
+                   COUNT(DISTINCT snapshot_date) AS days
+            FROM snapshots WHERE scrape_error IS NULL AND {IN_SEASON}
+        """)
+        span = cur.fetchone()
+        cur.execute("SELECT COUNT(*) AS n FROM lift_readings")
+        readings = cur.fetchone()["n"]
+        cur.execute("SELECT MIN(date) AS first FROM climate_daily")
+        climate_from = cur.fetchone()["first"]
+    return render_template("index.html", resorts=resorts, span=span,
+                           readings=readings, climate_from=climate_from,
+                           weeks=TRIP_WEEKS, status=collection_status())
+
+
+@app.route("/resorts")
+def resorts_table():
     rows = get_latest_snapshots()
-    return render_template("index.html", rows=rows, status=collection_status())
+    return render_template("resorts.html", rows=rows, status=collection_status())
 
 
 @app.route("/resort/<resort_id>")
 def resort_detail(resort_id: str):
-    days = request.args.get("days", 20, type=int)
+    with cursor() as cur:
+        cur.execute("""
+            SELECT r.id, r.name, r.country, r.area, r.top_altitude_m,
+                   (SELECT COUNT(*) FROM lift_geometry g WHERE g.resort_id = r.id) AS ways,
+                   (SELECT COUNT(*) FROM lifts l WHERE l.resort_id = r.id
+                     AND NOT l.name LIKE 'lift\\_%%') AS named_lifts
+            FROM resorts r WHERE r.id = %s
+        """, (resort_id,))
+        resort = cur.fetchone()
+    if not resort:
+        return render_template("resorts.html", rows=get_latest_snapshots(),
+                               status=collection_status()), 404
+    days = request.args.get("days", 30, type=int)
     days = max(1, min(days, 365))
-    history = get_history(resort_id, days)
-    lift_history = get_lift_history(resort_id, days)
+    start_md, end_md = _trip_window()
     return render_template("resort.html",
+                           resort=resort,
                            resort_id=resort_id,
-                           history=history,
-                           lift_history=lift_history,
-                           days=days)
+                           history=get_history(resort_id, days),
+                           lift_history=get_lift_history(resort_id, days),
+                           days=days, weeks=TRIP_WEEKS,
+                           start_md=start_md, end_md=end_md)
 
 
 def _plain(v):
@@ -820,6 +889,64 @@ def api_outlook():
     resp = jsonify({"from": start_md, "to": end_md, "trip_days": trip_days,
                     "resorts": out})
     resp.headers["Cache-Control"] = "public, max-age=1800"
+    return resp
+
+
+@app.route("/api/hindcast.json")
+def api_hindcast():
+    """What the wind model would have said about a stretch of real past days.
+
+    The outlook answers "what is this week usually like"; this answers "what
+    was that particular week like", which is the only way to say anything about
+    dates from before collection began. It is a reconstruction from the weather
+    record, and the payload carries the observed figure beside it wherever one
+    exists so the two can be told apart.
+    """
+    from scraper.model import _bin_for, shrunk_response
+
+    resort_id = request.args.get("resort", "cervinia")
+    try:
+        start = date.fromisoformat(request.args.get("from", "2026-02-14"))
+        end = date.fromisoformat(request.args.get("to", "2026-02-22"))
+    except ValueError:
+        return jsonify({"error": "from/to must look like YYYY-MM-DD"}), 400
+    if end < start or (end - start).days > 30:
+        return jsonify({"error": "a window of up to 31 days, please"}), 400
+
+    with cursor() as cur:
+        cur.execute("""
+            SELECT c.date, c.wind_gust_max_kmh, c.snowfall_cm, c.sunshine_hours,
+                   c.temp_mean_c,
+                   (SELECT s.pct_lifts_open FROM snapshots s
+                     WHERE s.resort_id = c.resort_id AND s.snapshot_date = c.date
+                       AND s.scrape_error IS NULL
+                     ORDER BY (s.slot <> 'midday'), s.snapshot_time DESC
+                     LIMIT 1) AS observed
+            FROM climate_daily c
+            WHERE c.resort_id = %s AND c.date BETWEEN %s AND %s
+            ORDER BY c.date
+        """, (resort_id, start, end))
+        rows = cur.fetchall()
+
+    resp_by_band = shrunk_response(resort_id)
+    days = []
+    for r in rows:
+        gust = _plain(r["wind_gust_max_kmh"])
+        band = _bin_for(gust)
+        est = resp_by_band.get(band) if band else None
+        days.append({
+            "date": r["date"].isoformat(),
+            "gust": gust, "band": band,
+            "snowfall_cm": _plain(r["snowfall_cm"]),
+            "sunshine_hours": _plain(r["sunshine_hours"]),
+            "temp_mean_c": _plain(r["temp_mean_c"]),
+            "expected_pct_open": round(est["pct_open"], 1) if est else None,
+            "p_lost_day": round(est["p_lost"], 3) if est else None,
+            "band_days": est["n"] if est else None,
+            "observed_pct_open": _plain(r["observed"]),
+        })
+    resp = jsonify({"resort_id": resort_id, "days": days})
+    resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
 

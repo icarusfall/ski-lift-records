@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lift map — Ski Lift Tracker</title>
+<title>Lift map — Ski Lift Records</title>
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.29.0/mapbox-gl.css" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -48,15 +48,20 @@
                        padding: 0.15rem 0.3rem; font-size: 0.8rem; color: var(--ink);
                        font-family: inherit; }
   #map.picking { cursor: crosshair; }
+  /* Embedded on another page: the map and the controls that matter for the
+     mode it was opened in, nothing else. */
+  .embed .bar > div:not(.keep) { display: none; }
+  .embed .bar { padding: 0.45rem 0.9rem; }
+  .full-link { margin-left: auto; color: #2b6cb0; font-size: 0.8rem; text-decoration: none;
+               white-space: nowrap; }
+  .full-link:hover { text-decoration: underline; }
   .warn { padding: 1.5rem; font-size: 0.9rem; color: var(--ink-2); }
   .warn code { background: var(--grid); padding: 0 4px; border-radius: 3px; }
 </style>
 </head>
-<body>
-<header>
-  <h1>🗺 Lift map</h1>
-  <a href="/explore">← Data explorer</a>
-</header>
+{% set embed = request.args.get("embed") == "1" %}
+<body class="{{ 'embed' if embed }}">
+{% if not embed %}{% set active = "map" %}{% include "_nav.html" %}{% endif %}
 
 {% if not mapbox_token %}
   <div class="warn">
@@ -128,13 +133,13 @@
     <label for="sundate">Date</label>
     <input type="date" id="sundate" value="2027-02-14">
   </div>
-  <div id="windBox" style="display:none;">
+  <div id="windBox" class="keep" style="display:none;">
     <label for="wind">Gust</label>
     <input type="range" id="wind" min="20" max="130" step="5" value="70">
     <span id="windVal" style="font-variant-numeric:tabular-nums;">70 km/h</span>
     <button id="blow" title="Sweep the wind from calm to severe">▶ Blow</button>
   </div>
-  <div class="legend" id="legendRecord">
+  <div class="legend keep" id="legendRecord">
     <span>Days open:</span>
     <span>0%</span>
     <span class="ramp" id="ramp"></span>
@@ -143,12 +148,12 @@
       <span class="sw" style="background:#898781"></span>no observations
     </span>
   </div>
-  <div class="legend" id="legendPredict" style="display:none;">
+  <div class="legend keep" id="legendPredict" style="display:none;">
     <span><span class="sw" style="background:#2a78d6"></span>running</span>
     <span><span class="sw" style="background:#e34948"></span>shut</span>
     <span><span class="sw" style="background:#898781"></span>not in the model</span>
   </div>
-  <div class="legend" id="legendPistes" style="display:none;">
+  <div class="legend keep" id="legendPistes" style="display:none;">
     <span>Runs:</span>
     <span><span class="sw" style="background:#008300"></span>novice</span>
     <span><span class="sw" style="background:#2a78d6"></span>easy</span>
@@ -157,6 +162,7 @@
     <span><span class="sw" style="background:#eb6834"></span>freeride</span>
     <span><span class="sw" style="background:#898781"></span>ungraded</span>
   </div>
+  {% if embed %}<a class="full-link" id="fullLink" href="/map" target="_top">Open the full map →</a>{% endif %}
 </div>
 <div id="predNote" class="warn" style="display:none;padding:0.6rem 1.2rem;
      font-size:0.78rem;border-bottom:1px solid var(--grid);"></div>
@@ -182,6 +188,59 @@
     ramp.appendChild(i);
   });
 
+  // ---- the address bar -------------------------------------------------
+  // Every control that changes what the map shows is mirrored in the query
+  // string, so a view can be linked to: /map?resort=zermatt&mode=predict&gust=90
+  var EMBED = document.body.classList.contains("embed");
+  var PARAMS = { resort: "resort", terrain: "terrain", look: "look", cables: "cables",
+                 pistes: "pistes", mode: "mode", sun: "sunmode", date: "sundate",
+                 gust: "wind" };
+  var DEFAULTS = {};
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var resortEl = document.getElementById("resort");
+    // Cervinia is the resort the project began with; alphabetical order would
+    // open on whichever happens to sort first.
+    if ([].some.call(resortEl.options, function (o) { return o.value === "cervinia"; }))
+      resortEl.value = "cervinia";
+    Object.keys(PARAMS).forEach(function (k) {
+      var el = document.getElementById(PARAMS[k]);
+      DEFAULTS[k] = el.value;
+      var v = q.get(k);
+      if (v === null) return;
+      if (el.tagName === "SELECT") {
+        if ([].some.call(el.options, function (o) { return o.value === v; })) el.value = v;
+      } else if (el.type === "range") {
+        var n = Math.round(+v / +el.step) * +el.step;
+        if (n >= +el.min && n <= +el.max) el.value = n;
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        el.value = v;
+      }
+    });
+    document.getElementById("windVal").textContent =
+      document.getElementById("wind").value + " km/h";
+  })();
+  function writeUrl() {
+    var q = new URLSearchParams();
+    Object.keys(PARAMS).forEach(function (k) {
+      var v = document.getElementById(PARAMS[k]).value;
+      // Only what differs from the default, and only what is in play: a gust
+      // means nothing outside predict mode, nor a date with the sun off.
+      if (k === "gust" && document.getElementById("mode").value !== "predict") return;
+      if (k === "date" && document.getElementById("sunmode").value !== "on") return;
+      if (k === "resort" || v !== DEFAULTS[k]) q.set(k, v);
+    });
+    var full = document.getElementById("fullLink");
+    if (full) full.href = "/map?" + q.toString();
+    if (EMBED) q.set("embed", "1");
+    history.replaceState(null, "", "?" + q.toString());
+  }
+  ["resort", "terrain", "look", "cables", "pistes", "mode", "sunmode", "sundate", "wind"]
+    .forEach(function (id) {
+      document.getElementById(id).addEventListener("change", writeUrl);
+    });
+  writeUrl();
+
   var map = new mapboxgl.Map({
     container: "map",
     style: "mapbox://styles/mapbox/outdoors-v12",
@@ -190,6 +249,8 @@
     pitch: 58,
     bearing: -15,
     antialias: true,
+    // Inside another page a bare scroll must move the page, not the map.
+    cooperativeGestures: EMBED,
   });
   map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "top-right");
   map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }));
@@ -706,6 +767,11 @@
     standard: "mapbox://styles/mapbox/standard",
   };
   var lastStyleUrl = STYLES.outdoors;   // matches the constructor above
+  if (document.getElementById("look").value !== "outdoors") {
+    // Opened from a link that asked for one of the Standard presets.
+    lastStyleUrl = STYLES.standard;
+    map.setStyle(STYLES.standard);
+  }
   function currentExaggeration() {
     return parseFloat(document.getElementById("terrain").value);
   }
@@ -735,6 +801,7 @@
   document.getElementById("resort").addEventListener("change", function (e) {
     load(e.target.value);
   });
+  applySunMode();   // the link may have arrived with the sun already on
   document.getElementById("pistes").addEventListener("change", applyPistes);
   document.getElementById("sunmode").addEventListener("change", applySunMode);
   document.getElementById("sundate").addEventListener("change", function () {

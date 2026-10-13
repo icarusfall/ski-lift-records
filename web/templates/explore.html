@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Explore — Ski Lift Tracker</title>
+<title>Explore the data — Ski Lift Records</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -22,7 +22,10 @@
   .container { max-width: 1250px; margin: 1.2rem auto; padding: 0 1rem; }
   .card { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
           border-radius: 8px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
-  .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+  .tabs { display: flex; gap: 0.5rem 1.6rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
+  .tab-group { display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+  .tab-group-l { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+                 color: var(--muted); flex-basis: 100%; }
   .tabs button { background: none; border: 1px solid var(--baseline); color: var(--ink-2);
                  border-radius: 999px; padding: 0.35rem 1rem; font-size: 0.85rem; cursor: pointer; }
   .tabs button.active { background: #2b6cb0; border-color: #2b6cb0; color: white; font-weight: 600; }
@@ -128,10 +131,7 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>🔍 Data Explorer</h1>
-  <span><a href="/map" style="margin-right:1rem;">🗺 Lift map</a><a href="/">← Dashboard</a></span>
-</header>
+{% set active = "explore" %}{% include "_nav.html" %}
 <div class="container">
 
   <div class="card">
@@ -194,12 +194,20 @@ const METRICS = {
   sun:   { label: "Sunshine",     unit: "h",    get: r => r.sun,    dom: null },
 };
 
-const TABS = [
-  ["heatmap", "Season heatmap"], ["compare", "Compare"], ["wind", "Wind vs open"],
-  ["lifts", "Lift reliability"], ["league", "League table"], ["plan", "Plan a trip"],
-  ["scatter", "Scatter lab"], ["climate", "35 years"], ["sun", "Sun & shadow"],
-  ["model", "How it works"],
+/* Grouped by the question a visitor arrives with, not by the order the tabs
+   were built in: what happened, what a given week is usually like, and how
+   the numbers were arrived at. */
+const TAB_GROUPS = [
+  ["The lift record", [
+    ["heatmap", "Season heatmap"], ["compare", "Compare resorts"],
+    ["league", "League table"], ["lifts", "Lift by lift"]]],
+  ["Your week", [
+    ["climate", "35 years of weather & snow"], ["plan", "Rank resorts for a week"],
+    ["sun", "Sun & shadow"]]],
+  ["The working", [
+    ["model", "How it works"], ["scatter", "Scatter lab"], ["wind", "Wind vs open"]]],
 ];
+const TABS = TAB_GROUPS.flatMap(g => g[1]);
 
 /* ---------- utilities ---------- */
 const $ = s => document.querySelector(s);
@@ -309,6 +317,7 @@ async function load() {
   selection = ["cervinia", "zermatt", "val-thorens"].filter(id => byResort.has(id));
   selection.forEach((id, i) => slotOf.set(id, i));
 
+  readHash();
   buildTabs(); buildPresets(bySeason); buildChips();
   $("#dFrom").value = dFrom; $("#dTo").value = dTo;
   $("#dFrom").addEventListener("change", e => { dFrom = e.target.value; markPreset(null); render(); });
@@ -319,14 +328,68 @@ async function load() {
 /* ---------- controls ---------- */
 function buildTabs() {
   const host = $("#tabs");
-  for (const [key, label] of TABS)
-    host.appendChild(el("button", { text: label, "data-tab": key, onclick: () => {
-      tab = key;
-      host.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.tab === key));
-      render();
-    }}));
-  host.querySelector("button").classList.add("active");
+  for (const [group, tabs] of TAB_GROUPS) {
+    const row = el("div", { class: "tab-group" }, el("span", { class: "tab-group-l", text: group }));
+    for (const [key, label] of tabs)
+      row.appendChild(el("button", { text: label, "data-tab": key, onclick: () => {
+        if (tab === key) return;
+        tab = key;
+        // A tab is a place, so it earns a history entry; everything else a
+        // reader adjusts only rewrites the current one (see writeHash).
+        history.pushState(null, "", location.pathname + location.search);
+        markTab(); render();
+      }}));
+    host.appendChild(row);
+  }
+  markTab();
 }
+function markTab() {
+  $("#tabs").querySelectorAll("button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === tab));
+}
+
+/* ---------- the address bar ---------- */
+/* What is on screen is in the URL, so a view can be linked to, bookmarked and
+   walked back through. Kept in the hash because nothing here needs the server:
+   #tab=climate&resorts=cervinia,zermatt&from=02-14&to=02-22 */
+const MD = /^\d{2}-\d{2}$/;
+function readHash() {
+  let h = location.hash.slice(1);
+  if (h && !h.includes("=")) h = "tab=" + h;          // bare #climate
+  const q = new URLSearchParams(h);
+  const t = q.get("tab");
+  if (TABS.some(x => x[0] === t)) tab = t;
+  const rs = (q.get("resorts") || "").split(",").filter(id => byResort.has(id)).slice(0, 8);
+  if (rs.length) {
+    selection = rs; slotOf = new Map(rs.map((id, i) => [id, i]));
+  }
+  // One resort for the views that show a single mountain.
+  const one = q.get("resort");
+  if (one) { liftPick = one; modelResort = one; sunOpts.resort = one; }
+  const a = q.get("from"), b = q.get("to");
+  if (MD.test(a || "") && MD.test(b || "")) {
+    if (clim.from !== a || clim.to !== b) CLIM = null;
+    clim.from = planFrom = a; clim.to = planTo = b;
+  }
+  const m = q.get("metric");
+  if (m && CLIMATE_METRICS[m]) clim.metric = m;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(q.get("date") || "")) sunOpts.date = q.get("date");
+}
+function writeHash() {
+  const q = new URLSearchParams();
+  q.set("tab", tab);
+  if (tab === "compare" || tab === "wind" || tab === "climate")
+    q.set("resorts", selection.join(","));
+  const one = { lifts: liftPick, model: modelResort, sun: sunOpts.resort }[tab];
+  if (one) q.set("resort", one);
+  if (tab === "climate") { q.set("from", clim.from); q.set("to", clim.to); q.set("metric", clim.metric); }
+  if (tab === "plan") { q.set("from", planFrom); q.set("to", planTo); }
+  if (tab === "sun") q.set("date", sunOpts.date);
+  // Commas are legal in a fragment and read better left alone.
+  history.replaceState(null, "", "#" + q.toString().replace(/%2C/g, ","));
+}
+window.addEventListener("popstate", () => { readHash(); markTab(); buildChips(); render(); });
+window.addEventListener("hashchange", () => { readHash(); markTab(); buildChips(); render(); });
 function buildPresets(bySeason) {
   const host = $("#rangePresets");
   const mk = (label, from, to) => el("button", { class: "preset", text: label, onclick: e => {
@@ -1845,7 +1908,13 @@ function renderModel(host) {
     .sort((a, b) => MODEL.resorts[a].name.localeCompare(MODEL.resorts[b].name));
   if (!ids.length) { host.appendChild(el("p", { class: "sub",
     text: "No resort has enough per-lift readings yet." })); return; }
-  if (!ids.includes(modelResort)) modelResort = ids.includes("cervinia") ? "cervinia" : ids[0];
+  // A link can ask for a resort the model has nothing on. Say so, rather than
+  // showing Cervinia's closure order under another resort's name.
+  let missing = null;
+  if (!ids.includes(modelResort)) {
+    missing = modelResort && RESORTS.find(r => r.id === modelResort);
+    modelResort = ids.includes("cervinia") ? "cervinia" : ids[0];
+  }
   const R = MODEL.resorts[modelResort];
 
   host.appendChild(el("h2", { text: "How the model works" }));
@@ -1865,6 +1934,9 @@ function renderModel(host) {
   const ctl = el("div", { class: "controls", style: "margin-bottom:0.9rem;" },
     el("div", { class: "group" }, el("label", { text: "Resort:" }), pick));
   host.appendChild(ctl);
+  if (missing) host.appendChild(el("p", { class: "hint", style: "margin:-0.4rem 0 0.9rem;",
+    text: missing.name + " has no closure order yet — there are not enough lift-by-lift "
+        + "readings from its core season. Showing " + R.name + " instead." }));
 
   renderScorecard(host, R);
   renderDoseResponse(host, R);
@@ -2316,6 +2388,7 @@ function render() {
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
   }
+  writeHash();
 }
 let rsz;
 window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setTimeout(render, 200); });
