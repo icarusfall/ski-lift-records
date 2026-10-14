@@ -222,6 +222,19 @@ def main():
 
     collect_all(resort_filter, slot=slot, catch_up=catch_up)
 
+    # The "when the snow arrives" view sets this autumn against the last 35,
+    # which only works if the weather record keeps up through the season.
+    # ERA5 lags real time by about five days, so once a week is plenty: the
+    # Monday midday run tops it up with 36 small requests. It runs after the
+    # lift collection and can never take that down with it.
+    if (resort_filter is None and slot == "midday" and not catch_up
+            and datetime.now(timezone.utc).weekday() == 0):
+        try:
+            from .climate import update_recent
+            update_recent()
+        except Exception as e:
+            print(f"Climate top-up skipped: {e}")
+
 
 if __name__ == "__main__":
     main()

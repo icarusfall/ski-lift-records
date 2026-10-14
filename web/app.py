@@ -892,6 +892,167 @@ def api_outlook():
     return resp
 
 
+# ---- when the snow arrives ---------------------------------------------
+# Autumn is measured from 1 October to the end of January: early enough to
+# catch the first falls, late enough that a slow start has usually resolved.
+AUTUMN_DAYS = 123                       # 1 Oct .. 31 Jan inclusive
+ARRIVAL_THRESHOLDS = {"snowfall": [50, 100, 150], "depth": [30, 60, 100]}
+# A grid cell still holding this much snow on 1 October is carrying last
+# winter (or a glacier) into the new one, so its depth says nothing about
+# when *this* winter's snow arrived.
+BARE_START_M = 0.10
+ENSO_THRESHOLD = 0.5                    # NOAA's El Niño / La Niña line
+STRONG_ENSO = 1.5
+
+
+def _enso() -> dict:
+    """Each season's winter ENSO state, plus the latest reading.
+
+    A winter is classed by its December-February ONI, which NOAA files under
+    January of the following year. The season under way has no DJF value yet,
+    so the newest monthly value stands in for it and is labelled as such.
+    """
+    names = ["DJF", "JFM", "FMA", "MAM", "AMJ", "MJJ",
+             "JJA", "JAS", "ASO", "SON", "OND", "NDJ"]
+    with cursor() as cur:
+        cur.execute("""
+            SELECT year, month, value FROM climate_indices
+            WHERE index_name = 'oni' ORDER BY year, month
+        """)
+        rows = cur.fetchall()
+    seasons = {}
+    for r in rows:
+        if r["month"] == 1:
+            seasons[r["year"] - 1] = round(float(r["value"]), 2)
+    latest = rows[-1] if rows else None
+    return {
+        "djf": seasons,
+        "latest": ({"value": round(float(latest["value"]), 2),
+                    "period": names[latest["month"] - 1] + " " + str(latest["year"])}
+                   if latest else None),
+        "threshold": ENSO_THRESHOLD, "strong": STRONG_ENSO,
+    }
+
+
+def _autumn_rows(resort_id: str | None):
+    """Daily snowfall and modelled depth for every October-January."""
+    where = "AND resort_id = %(r)s" if resort_id else ""
+    with cursor() as cur:
+        cur.execute(f"""
+            SELECT resort_id, date, snowfall_cm, snow_depth_model_m,
+                   (EXTRACT(YEAR FROM date)
+                    - CASE WHEN EXTRACT(MONTH FROM date) >= 8 THEN 0 ELSE 1 END)::int
+                       AS season
+            FROM climate_daily
+            WHERE EXTRACT(MONTH FROM date) IN (10, 11, 12, 1) {where}
+            ORDER BY resort_id, date
+        """, {"r": resort_id})
+        return cur.fetchall()
+
+
+def _autumns(rows) -> dict:
+    """{resort: {season: {"snowfall": [...], "depth": [...] | None}}}
+
+    Snowfall is the running total since 1 October, in cm; it never falls, so
+    it cannot see an early dump melting away. Depth can, but only where the
+    cell starts the autumn bare and stays below the glacier ceiling; anywhere
+    else it is left out for that season rather than read as a snowpack.
+    """
+    out = {}
+    for r in rows:
+        day = (r["date"] - date(r["season"], 10, 1)).days
+        if not 0 <= day < AUTUMN_DAYS:
+            continue
+        a = out.setdefault(r["resort_id"], {}).setdefault(r["season"], {
+            "snowfall": [None] * AUTUMN_DAYS, "depth": [None] * AUTUMN_DAYS,
+            "_sum": 0.0, "_first": day})
+        a["_sum"] += float(r["snowfall_cm"] or 0)
+        a["snowfall"][day] = round(a["_sum"], 1)
+        if r["snow_depth_model_m"] is not None:
+            a["depth"][day] = float(r["snow_depth_model_m"])
+    for seasons in out.values():
+        for season in list(seasons):
+            a = seasons[season]
+            # A season that does not start on 1 October (1990, whose autumn
+            # predates the record) cannot be measured from the start.
+            if a.pop("_first") != 0:
+                del seasons[season]
+                continue
+            a.pop("_sum")
+            n = max((i for i, v in enumerate(a["snowfall"]) if v is not None), default=-1) + 1
+            a["snowfall"] = a["snowfall"][:n]
+            dep = [d for d in a["depth"][:n]]
+            bare = dep and dep[0] is not None and dep[0] < BARE_START_M
+            ceiling = any(d is not None and d >= GLACIER_CEILING_M for d in dep)
+            a["depth"] = ([None if d is None else round(d * 100) for d in dep]
+                          if bare and not ceiling else None)
+            a["days"] = n
+    return out
+
+
+def _first_crossing(series, threshold):
+    for i, v in enumerate(series or []):
+        if v is not None and v >= threshold:
+            return i
+    return None
+
+
+@app.route("/api/season-start/<resort_id>.json")
+def api_season_start_resort(resort_id: str):
+    """Every autumn since 1991 at one resort, day by day."""
+    autumns = _autumns(_autumn_rows(resort_id)).get(resort_id)
+    if not autumns:
+        return jsonify({"error": "no climate record for this resort"}), 404
+    with cursor() as cur:
+        cur.execute("SELECT name, top_altitude_m FROM resorts WHERE id = %s", (resort_id,))
+        meta = cur.fetchone() or {}
+    resp = jsonify({
+        "resort_id": resort_id, "name": meta.get("name"),
+        "top_m": meta.get("top_altitude_m"),
+        "start": "10-01", "days": AUTUMN_DAYS,
+        "thresholds": ARRIVAL_THRESHOLDS,
+        "enso": _enso(),
+        "seasons": [{"season": s, **a} for s, a in sorted(autumns.items())],
+    })
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
+@app.route("/api/season-start.json")
+def api_season_start():
+    """When each autumn's snow arrived, for every resort and season.
+
+    Only the crossing day for each fixed threshold is sent: the full daily
+    series for every resort would be a megabyte the comparison table does not
+    need. A crossing of None means not reached by 31 January in a complete
+    autumn, or not yet in an incomplete one; `days` tells the two apart.
+    """
+    autumns = _autumns(_autumn_rows(None))
+    with cursor() as cur:
+        cur.execute("SELECT id, name, country, area, top_altitude_m FROM resorts")
+        meta = {r["id"]: r for r in cur.fetchall()}
+    out = {}
+    for rid, seasons in autumns.items():
+        m = meta.get(rid)
+        if not m:
+            continue
+        out[rid] = {"name": m["name"], "country": m["country"], "area": m["area"],
+                    "top_m": m["top_altitude_m"], "seasons": {}}
+        for season, a in sorted(seasons.items()):
+            row = {"days": a["days"]}
+            for t in ARRIVAL_THRESHOLDS["snowfall"]:
+                row[f"snowfall_{t}"] = _first_crossing(a["snowfall"], t)
+            for t in ARRIVAL_THRESHOLDS["depth"]:
+                row[f"depth_{t}"] = (_first_crossing(a["depth"], t)
+                                     if a["depth"] is not None else "n/a")
+            out[rid]["seasons"][season] = row
+    resp = jsonify({"start": "10-01", "days": AUTUMN_DAYS,
+                    "thresholds": ARRIVAL_THRESHOLDS, "enso": _enso(),
+                    "resorts": out})
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
 @app.route("/api/hindcast.json")
 def api_hindcast():
     """What the wind model would have said about a stretch of real past days.

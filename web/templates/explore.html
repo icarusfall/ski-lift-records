@@ -202,8 +202,8 @@ const TAB_GROUPS = [
     ["heatmap", "Season heatmap"], ["compare", "Compare resorts"],
     ["league", "League table"], ["lifts", "Lift by lift"]]],
   ["Your week", [
-    ["climate", "35 years of weather & snow"], ["plan", "Rank resorts for a week"],
-    ["sun", "Sun & shadow"]]],
+    ["climate", "35 years of weather & snow"], ["arrival", "When the snow arrives"],
+    ["plan", "Rank resorts for a week"], ["sun", "Sun & shadow"]]],
   ["The working", [
     ["model", "How it works"], ["scatter", "Scatter lab"], ["wind", "Wind vs open"]]],
 ];
@@ -365,7 +365,10 @@ function readHash() {
   }
   // One resort for the views that show a single mountain.
   const one = q.get("resort");
-  if (one) { liftPick = one; modelResort = one; sunOpts.resort = one; }
+  if (one) { liftPick = one; modelResort = one; sunOpts.resort = one; arr.resort = one; }
+  const am = q.get("measure"), at = +q.get("threshold");
+  if (ARR_MEASURES[am]) arr.measure = am;
+  if (at > 0) arr.threshold = at;
   const a = q.get("from"), b = q.get("to");
   if (MD.test(a || "") && MD.test(b || "")) {
     if (clim.from !== a || clim.to !== b) CLIM = null;
@@ -380,7 +383,9 @@ function writeHash() {
   q.set("tab", tab);
   if (tab === "compare" || tab === "wind" || tab === "climate")
     q.set("resorts", selection.join(","));
-  const one = { lifts: liftPick, model: modelResort, sun: sunOpts.resort }[tab];
+  const one = { lifts: liftPick, model: modelResort, sun: sunOpts.resort,
+                 arrival: arr.resort }[tab];
+  if (tab === "arrival") { q.set("measure", arr.measure); q.set("threshold", arr.threshold); }
   if (one) q.set("resort", one);
   if (tab === "climate") { q.set("from", clim.from); q.set("to", clim.to); q.set("metric", clim.metric); }
   if (tab === "plan") { q.set("from", planFrom); q.set("to", planTo); }
@@ -1534,6 +1539,442 @@ function decadeTable(series, M, stationSeries = []) {
   return t;
 }
 
+/* ---------- when the snow arrives ---------- */
+/* Is this a late start? Every autumn since 1991, measured from 1 October,
+   with each winter labelled by its El Niño / La Niña state. Labelled, not
+   predicted from: the Pacific's grip on the Alps is weak and indirect, so
+   the honest thing is to show what El Niño winters have looked like and how
+   far that differs from chance. */
+let ARR_ALL = null, arrAllLoading = false;
+const ARR_ONE = new Map();               // resort id -> per-day series
+let arr = { resort: "cervinia", measure: "snowfall", threshold: 100,
+            sort: "name", asc: true };
+const ARR_MEASURES = {
+  snowfall: { label: "Snowfall since 1 October", short: "snowfall", unit: "cm" },
+  depth:    { label: "Modelled snow depth at the summit", short: "depth", unit: "cm" },
+};
+const ENSO_COL = { nino: "#e34948", nina: "#2a78d6", neutral: "#b4b2a9" };
+const ENSO_NAME = { nino: "El Niño", nina: "La Niña", neutral: "neutral" };
+
+function arrDayLabel(day) {
+  // 2001 is any year without a 29 February; October to January never meets one.
+  const d = new Date(Date.UTC(2001, 9, 1) + day * 864e5);
+  return d.getUTCDate() + " " + MONTHS[d.getUTCMonth()];
+}
+function ensoOf(E, season, current) {
+  const v = season === current ? E.latest && E.latest.value : E.djf[season];
+  if (v == null) return { phase: "neutral", value: null, strong: false };
+  const phase = v >= E.threshold ? "nino" : v <= -E.threshold ? "nina" : "neutral";
+  return { phase, value: v, strong: Math.abs(v) >= E.strong };
+}
+/* Median where "never" counts as later than everything, which is what it is. */
+function arrMedian(vals) {
+  if (!vals.length) return null;
+  const s = vals.map(v => v == null ? Infinity : v).sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function arrFmt(day, days) {
+  if (day == null) return "—";
+  if (!isFinite(day)) return "after 31 Jan";
+  return arrDayLabel(Math.round(day));
+}
+/* How often a median gap at least this large turns up when the El Niño label
+   is dealt out at random. A fixed seed keeps the number from flickering. */
+function arrPermutation(groupVals, restVals, n = 2000) {
+  const obs = arrMedian(groupVals) - arrMedian(restVals);
+  if (!isFinite(obs)) return null;
+  const pool = groupVals.concat(restVals), k = groupVals.length;
+  let seed = 7, hits = 0;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < n; i++) {
+    const p = pool.slice();
+    for (let j = p.length - 1; j > 0; j--) {
+      const r = Math.floor(rnd() * (j + 1)); [p[j], p[r]] = [p[r], p[j]];
+    }
+    const d = arrMedian(p.slice(0, k)) - arrMedian(p.slice(k));
+    if (isFinite(d) && Math.abs(d) >= Math.abs(obs) - 1e-9) hits++;
+  }
+  return { obs, p: hits / n };
+}
+
+function loadArrival(id) {
+  if (!ARR_ONE.has(id)) {
+    ARR_ONE.set(id, null);
+    fetch(`/api/season-start/${id}.json`).then(r => r.json())
+      .then(d => { ARR_ONE.set(id, d); render(); })
+      .catch(e => { ARR_ONE.set(id, { error: e.message }); render(); });
+  }
+  if (!ARR_ALL && !arrAllLoading) {
+    arrAllLoading = true;
+    fetch("/api/season-start.json").then(r => r.json())
+      .then(d => { ARR_ALL = d; arrAllLoading = false; render(); })
+      .catch(e => { ARR_ALL = { error: e.message }; arrAllLoading = false; render(); });
+  }
+}
+
+function renderArrival(host) {
+  host.appendChild(el("h2", { text: "When the snow arrives" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Is this a late start? Every autumn since 1991 from the ERA5 reanalysis at "
+        + "summit height, counted from 1 October, with each winter marked by its El Niño "
+        + "or La Niña state. It describes the natural snow, not when lifts open: resorts "
+        + "make snow and open on their own timetables." }));
+
+  const ids = RESORTS.map(r => r.id);
+  if (!ids.includes(arr.resort)) arr.resort = "cervinia";
+  const D = ARR_ONE.get(arr.resort);
+
+  // controls
+  const ctl = el("div", { class: "controls", style: "margin-bottom:0.6rem;" });
+  const pick = el("select", { onchange: e => { arr.resort = e.target.value; render(); } });
+  for (const r of RESORTS) {
+    const o = el("option", { value: r.id, text: r.name });
+    if (r.id === arr.resort) o.setAttribute("selected", "");
+    pick.appendChild(o);
+  }
+  ctl.appendChild(el("div", { class: "group" }, el("label", { text: "Resort:" }), pick));
+  const ms = el("div", { class: "group" }, el("label", { text: "Measure:" }));
+  for (const [k, m] of Object.entries(ARR_MEASURES))
+    ms.appendChild(el("button", { class: "preset" + (arr.measure === k ? " active" : ""),
+      text: m.label, onclick: () => {
+        arr.measure = k;
+        const ts = (D && D.thresholds || ARR_ALL && ARR_ALL.thresholds || {})[k] || [];
+        if (ts.length && !ts.includes(arr.threshold)) arr.threshold = ts[1] ?? ts[0];
+        render();
+      } }));
+  ctl.appendChild(ms);
+  host.appendChild(ctl);
+
+  if (D === undefined || D === null) {
+    host.appendChild(el("p", { class: "sub", text: "Reading 35 autumns…" }));
+    loadArrival(arr.resort);
+    return;
+  }
+  if (D.error) { host.appendChild(el("p", { class: "sub", text: "Could not load: " + D.error })); return; }
+  loadArrival(arr.resort);                 // the all-resort table, if not yet asked for
+
+  const thresholds = D.thresholds[arr.measure];
+  if (!thresholds.includes(arr.threshold)) arr.threshold = thresholds[1] ?? thresholds[0];
+  const tg = el("div", { class: "group", style: "margin:-0.2rem 0 0.7rem;" },
+    el("label", { text: arr.measure === "snowfall" ? "Arrived when the total reached:"
+                                                   : "Arrived when the depth reached:" }));
+  for (const t of thresholds)
+    tg.appendChild(el("button", { class: "preset" + (t === arr.threshold ? " active" : ""),
+      text: t + " cm", onclick: () => { arr.threshold = t; render(); } }));
+  host.appendChild(el("div", { class: "controls" }, tg));
+
+  const E = D.enso, N = D.days;
+  const current = Math.max(...D.seasons.map(s => s.season));
+  const series = D.seasons.map(s => ({
+    season: s.season, days: s.days, complete: s.days >= N,
+    vals: s[arr.measure], enso: ensoOf(E, s.season, current),
+  }));
+  const usable = series.filter(s => s.vals);
+  const past = usable.filter(s => s.complete);
+  const cur = usable.find(s => s.season === current && !s.complete);
+  if (past.length < 6) {
+    host.appendChild(el("p", { class: "sub", style: "color:var(--s2);",
+      text: D.name + " has no usable modelled snow depth: its grid cell carries glacier or "
+          + "last winter's snow through the summer, so the depth never starts from bare "
+          + "ground and cannot say when this winter's snow arrived. Snowfall works "
+          + "everywhere — switch the measure above." }));
+    return;
+  }
+  const dropped = series.filter(s => s.complete && !s.vals).length;
+  for (const s of usable) s.arrival = (() => {
+    const i = s.vals.findIndex(v => v != null && v >= arr.threshold);
+    return i < 0 ? (s.complete ? Infinity : null) : i;
+  })();
+
+  /* --- this season so far --- */
+  const M = ARR_MEASURES[arr.measure];
+  if (cur) {
+    const day = cur.vals.length - 1, now = cur.vals[day];
+    const before = past.filter(s => s.vals[day] != null);
+    const less = before.filter(s => s.vals[day] < now).length;
+    const reached = cur.arrival != null;
+    host.appendChild(el("div", { class: "stats" },
+      el("div", { class: "stat" },
+        el("div", { class: "stat-v", text: Math.round(now) + " cm" }),
+        el("div", { class: "stat-l", text: M.short + " by " + arrDayLabel(day) + " this autumn" }),
+        el("div", { class: "stat-n", text: "more than by that date in " + less + " of "
+          + before.length + " autumns since 1991" })),
+      el("div", { class: "stat" },
+        el("div", { class: "stat-v", text: reached ? arrDayLabel(cur.arrival) : "Not yet" }),
+        el("div", { class: "stat-l", text: arr.threshold + " cm reached this autumn" }),
+        el("div", { class: "stat-n", text: "typically by " + arrFmt(arrMedian(past.map(s => s.arrival)))
+          + "; weather record runs to " + arrDayLabel(day) })),
+      el("div", { class: "stat" },
+        el("div", { class: "stat-v", text: (E.latest.value > 0 ? "+" : "") + E.latest.value.toFixed(1) }),
+        el("div", { class: "stat-l", text: "ENSO index now (" + E.latest.period + ")" }),
+        el("div", { class: "stat-n", text: E.latest.value >= E.strong ? "a strong El Niño"
+          : E.latest.value >= E.threshold ? "El Niño" : E.latest.value <= -E.threshold
+          ? "La Niña" : "neutral" }))));
+  }
+
+  /* --- the autumns, day by day --- */
+  host.appendChild(el("h3", { text: M.label + ", every autumn" }));
+  const lg = el("div", { class: "legend" });
+  for (const k of ["nino", "neutral", "nina"]) {
+    const it = el("span", {}, el("span", { class: "dot" }), document.createTextNode(ENSO_NAME[k] + " winters"));
+    it.querySelector(".dot").style.background = ENSO_COL[k];
+    lg.appendChild(it);
+  }
+  if (cur) {
+    const it = el("span", {}, el("span", { class: "dot" }), document.createTextNode(seasonLabel(current) + " so far"));
+    it.querySelector(".dot").style.background = INK;
+    lg.appendChild(it);
+  }
+  lg.appendChild(el("span", { text: "Shaded: the middle half of past autumns; dashed: their median" }));
+  host.appendChild(lg);
+  host.appendChild(arrivalLines(past, cur, N, M));
+
+  /* --- arrival, season by season --- */
+  host.appendChild(el("h3", { text: "The day " + arr.threshold + " cm was reached, season by season" }));
+  host.appendChild(arrivalDots(usable, cur, N, current));
+  if (dropped)
+    host.appendChild(el("p", { class: "hint", text: dropped + " season" + (dropped > 1 ? "s are" : " is")
+      + " left out: the summit cell still held snow on 1 October, so the depth could not "
+      + "say when that winter's snow arrived." }));
+
+  /* --- El Niño against the rest --- */
+  const by = k => past.filter(s => s.enso.phase === k).map(s => s.arrival);
+  const strong = past.filter(s => s.enso.phase === "nino" && s.enso.strong);
+  const nino = by("nino"), rest = past.filter(s => s.enso.phase !== "nino").map(s => s.arrival);
+  const perm = nino.length >= 3 ? arrPermutation(nino, rest) : null;
+  host.appendChild(el("h3", { text: "Do El Niño winters start later here?" }));
+  const tile = (v, l, n) => el("div", { class: "stat" }, el("div", { class: "stat-v", text: v }),
+    el("div", { class: "stat-l", text: l }), n ? el("div", { class: "stat-n", text: n }) : null);
+  host.appendChild(el("div", { class: "stats" },
+    tile(arrFmt(arrMedian(past.map(s => s.arrival))), "typical arrival, all " + past.length + " seasons"),
+    tile(arrFmt(arrMedian(nino)), "in El Niño winters", nino.length + " seasons"),
+    tile(arrFmt(arrMedian(strong.map(s => s.arrival))), "in strong El Niño winters",
+      strong.map(s => seasonLabel(s.season)).join(", ") || "none"),
+    tile(arrFmt(arrMedian(by("nina"))), "in La Niña winters", by("nina").length + " seasons"),
+    tile(arrFmt(arrMedian(by("neutral"))), "in neutral winters", by("neutral").length + " seasons")));
+  if (perm) {
+    const days = Math.round(Math.abs(perm.obs));
+    host.appendChild(el("p", { class: "sub", style: "margin-top:0.4rem;",
+      text: (days === 0 ? "El Niño winters reached " + arr.threshold + " cm at much the same time as the rest. "
+             : "El Niño winters reached " + arr.threshold + " cm a median " + days + " day"
+               + (days === 1 ? "" : "s") + (perm.obs > 0 ? " later" : " earlier") + " than the rest. ")
+          + "Shuffling the El Niño label at random across these " + past.length
+          + " seasons gives a gap at least that big " + Math.round(perm.p * 100) + "% of the time"
+          + (perm.p < 0.05 ? " — unusual enough to take note of, though with this few winters "
+                             + "one or two odd seasons can still make it."
+             : perm.p < 0.2 ? " — suggestive at most." : " — so this gap is well within chance.") }));
+  }
+
+  /* --- all resorts --- */
+  host.appendChild(el("h3", { text: "Every resort, " + M.short + " to " + arr.threshold + " cm" }));
+  if (!ARR_ALL || arrAllLoading) { host.appendChild(el("p", { class: "sub", text: "Reading every resort…" })); }
+  else if (ARR_ALL.error) { host.appendChild(el("p", { class: "sub", text: "Could not load: " + ARR_ALL.error })); }
+  else host.appendChild(arrivalTable(current));
+
+  host.appendChild(el("p", { class: "hint", style: "margin-top:0.8rem;",
+    text: "ERA5 is a reanalysis on a grid tens of kilometres wide, so neighbouring resorts can "
+        + "share a cell and read identically (Val Thorens, Les Menuires and St-Martin do). "
+        + "Snowfall is a running total and cannot see an early fall melting away; modelled "
+        + "depth can, but only where the cell starts the autumn bare. Winters are classed by "
+        + "NOAA's December–February ONI (El Niño at +" + E.threshold + " or above, strong at +"
+        + E.strong + "); the season under way uses the latest value, " + E.latest.period + "." }));
+}
+
+function arrivalLines(past, cur, N, M) {
+  const W = 1000, H = 380, m = { l: 52, r: 18, t: 14, b: 30, w: 1000 };
+  const all = past.concat(cur ? [cur] : []);
+  const top = Math.max(arr.threshold * 1.2,
+    ...all.map(s => Math.max(...s.vals.filter(v => v != null))));
+  const dom = [0, Math.ceil(top / 50) * 50];
+  const X = d => m.l + d / (N - 1) * (W - m.l - m.r);
+  const Y = v => H - m.b - v / dom[1] * (H - m.t - m.b);
+  const svg = chartSvg(W, H);
+  axisLeft(svg, Y, dom, m, M.unit);
+  for (const [d, l] of [[0, "1 Oct"], [31, "1 Nov"], [61, "1 Dec"], [92, "1 Jan"], [N - 1, "31 Jan"]]) {
+    svg.appendChild(el("line", { x1: X(d), x2: X(d), y1: m.t, y2: H - m.b, stroke: GRID }));
+    svg.appendChild(el("text", { x: X(d), y: H - 10, "text-anchor": "middle", "font-size": 11,
+      fill: MUTED, text: l }));
+  }
+  // the middle half of past autumns, and their median
+  const q = (a, p) => { const s = a.slice().sort((x, y) => x - y); const i = (s.length - 1) * p;
+    return s[Math.floor(i)] + (s[Math.ceil(i)] - s[Math.floor(i)]) * (i % 1); };
+  const lo = [], hi = [], med = [];
+  for (let d = 0; d < N; d++) {
+    const v = past.map(s => s.vals[d]).filter(x => x != null);
+    if (v.length < 6) continue;
+    lo.push([d, q(v, 0.25)]); hi.push([d, q(v, 0.75)]); med.push([d, q(v, 0.5)]);
+  }
+  svg.appendChild(el("path", { fill: WASH, stroke: "none",
+    d: "M" + lo.map(([d, v]) => X(d) + " " + Y(v)).join(" L")
+       + " L" + hi.reverse().map(([d, v]) => X(d) + " " + Y(v)).join(" L") + " Z" }));
+  const path = vals => vals.map((v, d) => v == null ? null : [d, v]).filter(Boolean)
+    .map(([d, v], i) => (i ? "L" : "M") + X(d).toFixed(1) + " " + Y(v).toFixed(1)).join(" ");
+  const lines = [];
+  for (const s of past) {
+    const p = el("path", { d: path(s.vals), fill: "none", stroke: ENSO_COL[s.enso.phase],
+      "stroke-width": 1.2, opacity: s.enso.phase === "neutral" ? 0.45 : 0.6 });
+    svg.appendChild(p);
+    lines.push([s, p]);
+  }
+  svg.appendChild(el("path", { d: "M" + med.map(([d, v]) => X(d) + " " + Y(v)).join(" L"),
+    fill: "none", stroke: INK2, "stroke-width": 1.6, "stroke-dasharray": "5 4" }));
+  svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(arr.threshold), y2: Y(arr.threshold),
+    stroke: INK, "stroke-width": 1, "stroke-dasharray": "2 3" }));
+  svg.appendChild(el("text", { x: m.l + 6, y: Y(arr.threshold) - 5, "font-size": 11, fill: INK,
+    text: arr.threshold + " cm" }));
+  if (cur) {
+    svg.appendChild(el("path", { d: path(cur.vals), fill: "none", stroke: SURF, "stroke-width": 6 }));
+    svg.appendChild(el("path", { d: path(cur.vals), fill: "none", stroke: INK, "stroke-width": 3 }));
+    const d = cur.vals.length - 1;
+    svg.appendChild(el("circle", { cx: X(d), cy: Y(cur.vals[d]), r: 4.5, fill: INK }));
+  }
+  // Hover picks the nearest autumn at the pointer's date, which is kinder than
+  // asking anyone to land on a 1-pixel line.
+  const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b,
+    fill: "transparent" });
+  let lit = null;
+  hit.addEventListener("mousemove", ev => {
+    const r = svg.getBoundingClientRect(), k = W / r.width;
+    const d = Math.max(0, Math.min(N - 1, Math.round(((ev.clientX - r.left) * k - m.l) / (W - m.l - m.r) * (N - 1))));
+    const yv = ((H - m.b) - (ev.clientY - r.top) * k) / (H - m.t - m.b) * dom[1];
+    let best = null;
+    for (const [s, p] of lines) {
+      const v = s.vals[d]; if (v == null) continue;
+      if (!best || Math.abs(v - yv) < Math.abs(best[0].vals[d] - yv)) best = [s, p];
+    }
+    if (!best) return;
+    if (lit && lit !== best[1]) { lit.setAttribute("stroke-width", 1.2); }
+    lit = best[1]; lit.setAttribute("stroke-width", 3); svg.insertBefore(lit, hit);
+    const s = best[0];
+    showTip(`<div class="t-date">${seasonLabel(s.season)}</div>`
+      + `<div class="t-sub">${ENSO_NAME[s.enso.phase]}${s.enso.strong && s.enso.phase !== "neutral" ? " (strong)" : ""}`
+      + `${s.enso.value != null ? ", ONI " + (s.enso.value > 0 ? "+" : "") + s.enso.value.toFixed(1) : ""}</div>`
+      + `<table><tr><td>${arrDayLabel(d)}</td><td>${Math.round(s.vals[d])} cm</td></tr>`
+      + `<tr><td>${arr.threshold} cm by</td><td>${arrFmt(s.arrival)}</td></tr></table>`,
+      ev.clientX, ev.clientY);
+  });
+  hit.addEventListener("mouseleave", () => { hideTip(); if (lit) lit.setAttribute("stroke-width", 1.2); lit = null; });
+  svg.appendChild(hit);
+  return svg;
+}
+
+function arrivalDots(usable, cur, N, current) {
+  const W = 1000, H = 300, m = { l: 62, r: 18, t: 22, b: 30, w: 1000 };
+  const seasons = usable.map(s => s.season);
+  const x0 = Math.min(...seasons), x1 = Math.max(...seasons);
+  const LATE = N + 8;                      // the "not by 31 January" row
+  const X = v => m.l + (v - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = d => H - m.b - d / LATE * (H - m.t - m.b);   // later is higher
+  const svg = chartSvg(W, H);
+  for (const [d, l] of [[0, "1 Oct"], [31, "1 Nov"], [61, "1 Dec"], [92, "1 Jan"], [N - 1, "31 Jan"]]) {
+    svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(d), y2: Y(d), stroke: GRID }));
+    svg.appendChild(el("text", { x: m.l - 6, y: Y(d) + 4, "text-anchor": "end", "font-size": 11,
+      fill: MUTED, text: l }));
+  }
+  svg.appendChild(el("text", { x: m.l - 6, y: Y(LATE) + 4, "text-anchor": "end", "font-size": 11,
+    fill: MUTED, text: "after Jan" }));
+  for (let s = Math.ceil(x0 / 5) * 5; s <= x1; s += 5)
+    svg.appendChild(el("text", { x: X(s), y: H - 10, "text-anchor": "middle", "font-size": 11,
+      fill: MUTED, text: seasonLabel(s) }));
+  // Trend over the seasons that did arrive by the end of January.
+  const pts = usable.filter(s => s.season !== current && isFinite(s.arrival) && s.arrival != null)
+    .map(s => ({ x: s.season, y: s.arrival }));
+  const t = trend(pts);
+  if (t) svg.appendChild(el("line", { x1: X(x0), x2: X(x1), y1: Y(t.intercept + t.slope * x0),
+    y2: Y(t.intercept + t.slope * x1), stroke: INK2, "stroke-width": 1.5, opacity: 0.6,
+    "stroke-dasharray": t.significant ? "" : "6 5" }));
+  for (const s of usable) {
+    if (s === cur && s.arrival == null) {
+      // Not there yet: a bar up to today, so "not yet" is not mistaken for "never".
+      const d = s.vals.length - 1;
+      svg.appendChild(el("line", { x1: X(s.season), x2: X(s.season), y1: Y(0), y2: Y(d),
+        stroke: INK, "stroke-width": 3 }));
+      svg.appendChild(el("text", { x: X(s.season) - 6, y: Y(d) - 6, "text-anchor": "end",
+        "font-size": 11, fill: INK, text: "not yet, to " + arrDayLabel(d) }));
+      continue;
+    }
+    const late = !isFinite(s.arrival);
+    const c = s === cur ? INK : ENSO_COL[s.enso.phase];
+    const dot = el("circle", { cx: X(s.season), cy: Y(late ? LATE : s.arrival), r: 5.5,
+      fill: late ? SURF : c, stroke: s.enso.strong && s.enso.phase !== "neutral" ? INK : c,
+      "stroke-width": s.enso.strong && s.enso.phase !== "neutral" ? 2 : 1.5 });
+    dot.addEventListener("mousemove", ev => showTip(`<div class="t-date">${seasonLabel(s.season)}</div>`
+      + `<div class="t-sub">${ENSO_NAME[s.enso.phase]}${s.enso.strong && s.enso.phase !== "neutral" ? " (strong)" : ""}</div>`
+      + `${arr.threshold} cm ${late ? "not reached by 31 Jan" : "by " + arrDayLabel(s.arrival)}`,
+      ev.clientX, ev.clientY));
+    dot.addEventListener("mouseleave", hideTip);
+    svg.appendChild(dot);
+  }
+  const wrap = el("div", {}, svg);
+  if (t) wrap.appendChild(el("p", { class: "hint",
+    text: "Trend: " + (t.slope > 0 ? "+" : "") + (t.slope * 10).toFixed(1) + " days per decade (95% interval "
+        + (t.lo * 10).toFixed(1) + " to " + (t.hi * 10).toFixed(1) + ")"
+        + (t.significant ? "" : " — dashed, because no change is within the interval")
+        + ". Ringed dots are strong El Niño or La Niña winters; hollow ones never got there by 31 January." }));
+  return wrap;
+}
+
+function arrivalTable(current) {
+  const key = arr.measure + "_" + arr.threshold, E = ARR_ALL.enso;
+  const rows = [];
+  for (const [id, r] of Object.entries(ARR_ALL.resorts)) {
+    const ss = Object.entries(r.seasons).map(([s, v]) => ({ season: +s, ...v }));
+    const past = ss.filter(s => s.days >= ARR_ALL.days && s[key] !== "n/a");
+    if (past.length < 6) { rows.push({ id, name: r.name, na: true }); continue; }
+    const val = s => s[key] == null ? Infinity : s[key];
+    const ph = s => ensoOf(E, s.season, current).phase;
+    const all = past.map(val), nino = past.filter(s => ph(s) === "nino").map(val);
+    const rest = past.filter(s => ph(s) !== "nino").map(val);
+    const t = trend(past.filter(s => s[key] != null).map(s => ({ x: s.season, y: s[key] })));
+    const now = ss.find(s => s.season === current && s.days < ARR_ALL.days);
+    rows.push({ id, name: r.name, n: past.length, typical: arrMedian(all),
+      nino: arrMedian(nino), nina: arrMedian(past.filter(s => ph(s) === "nina").map(val)),
+      gap: arrMedian(nino) - arrMedian(rest), trend: t ? t.slope * 10 : null,
+      trendSig: t && t.significant,
+      now: now ? (now[key] == null || now[key] === "n/a" ? null : now[key]) : undefined });
+  }
+  const cols = [["name", "Resort"], ["typical", "Typical arrival"], ["nino", "El Niño winters"],
+    ["nina", "La Niña winters"], ["gap", "El Niño vs rest"], ["trend", "Trend, days/decade"],
+    ["now", "This autumn"]];
+  const sortVal = (r, k) => r.na ? Infinity : (k === "name" ? r.name : (r[k] ?? Infinity));
+  rows.sort((a, b) => {
+    const x = sortVal(a, arr.sort), y = sortVal(b, arr.sort);
+    const c = typeof x === "string" ? x.localeCompare(y) : x - y;
+    return arr.asc ? c : -c;
+  });
+  const tbl = el("table", { class: "league" });
+  const hr = el("tr");
+  for (const [k, l] of cols)
+    hr.appendChild(el("th", { text: l + (arr.sort === k ? (arr.asc ? " ▲" : " ▼") : ""),
+      onclick: () => { arr.asc = arr.sort === k ? !arr.asc : true; arr.sort = k; render(); } }));
+  tbl.appendChild(el("thead", {}, hr));
+  const tb = el("tbody");
+  const gapTxt = g => !isFinite(g) ? "—" : Math.round(g) === 0 ? "same"
+    : (g > 0 ? "+" : "−") + Math.abs(Math.round(g)) + " days";
+  for (const r of rows) {
+    const tr = el("tr", { style: "cursor:pointer;" + (r.id === arr.resort ? "background:" + WASH + ";" : "") });
+    tr.addEventListener("click", () => { arr.resort = r.id; render(); window.scrollTo({ top: 0 }); });
+    if (r.na) {
+      tr.appendChild(el("td", { text: r.name }));
+      tr.appendChild(el("td", { colspan: 6, style: "text-align:left;color:" + MUTED,
+        text: "no usable depth — glacier or summer snow in the cell" }));
+    } else {
+      for (const v of [r.name, arrFmt(r.typical), arrFmt(r.nino), arrFmt(r.nina), gapTxt(r.gap),
+          r.trend == null ? "—" : (r.trend > 0 ? "+" : "") + r.trend.toFixed(1) + (r.trendSig ? "" : "*"),
+          r.now === undefined ? "—" : r.now == null ? "not yet" : arrDayLabel(r.now)])
+        tr.appendChild(el("td", { text: v }));
+    }
+    tb.appendChild(tr);
+  }
+  tbl.appendChild(tb);
+  return el("div", {},
+    el("div", { style: "overflow-x:auto;" }, tbl),
+    el("p", { class: "hint", text: "Medians over complete seasons. “El Niño vs rest” is positive "
+      + "when El Niño winters arrived later. * the trend's 95% interval includes no change. "
+      + "Click a resort to chart it." }));
+}
+
 /* ---------- scatter lab ---------- */
 /* Axes are the time-series metrics plus a few that only make sense against
    another variable: altitude is constant per resort, and the within-day drop
@@ -2372,7 +2813,7 @@ function render() {
   hideTip();
   const host = $("#view");
   host.innerHTML = "";
-  const ownControls = tab === "plan" || tab === "model" || tab === "climate"
+  const ownControls = tab === "plan" || tab === "model" || tab === "climate" || tab === "arrival"
                       || tab === "sun";
   $("#resortCtl").style.display =
     (tab === "compare" || tab === "wind" || tab === "climate") ? "" : "none";
@@ -2383,7 +2824,7 @@ function render() {
   try {
     ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
        lifts: renderLifts, league: renderLeague, plan: renderPlan,
-       scatter: renderScatter, climate: renderClimate, sun: renderSun,
+       scatter: renderScatter, climate: renderClimate, sun: renderSun, arrival: renderArrival,
        model: renderModel })[tab](host);
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
