@@ -308,10 +308,11 @@ document.getElementById("picker").addEventListener("submit", function (e) {
         + (usual ? ". A run of three or more such days in this week has turned up in about "
                    + Math.round(usual.p_storm_run * 100) + "% of seasons since 1991" : "")
         + ". This is a reconstruction from the ERA5 weather record, not an observation. "
+        + "On the mountain it was a bad week: most of it was shut for about half the days. "
         + "The model's answer barely moves — " + Math.round(lo) + " to " + Math.round(hi)
-        + "% of lifts across the week — because it knows only four bands of wind and "
-        + "has one part-season of Cervinia to learn from. A second winter is what will "
-        + "show whether it is underselling weeks like this one.";
+        + "% of lifts across the week — so it undersells a week like this badly. It knows "
+        + "only four bands of wind and has half a season of Cervinia to learn from; this "
+        + "winter's records are the chance to do better.";
     })
     .catch(function () { host.textContent = "Could not load the week."; });
 })();
