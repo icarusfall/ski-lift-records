@@ -231,12 +231,21 @@ def all_window_stats(start_md: str, end_md: str, threshold: float = 60.0,
     Ranking the whole field otherwise costs two indexless scans per resort,
     which is far too slow to serve from a web request.
     """
+    # A window may wrap the new year (28 Dec - 4 Jan). BETWEEN matches nothing
+    # for those, and grouping by calendar year would cut the week in two, so
+    # days are grouped by the season they fall in (1 Aug boundary) instead.
+    # For a window that does not wrap, that is the same grouping as before.
+    window = ("TO_CHAR(date, 'MM-DD') BETWEEN %s AND %s" if start_md <= end_md
+              else "(TO_CHAR(date, 'MM-DD') >= %s OR TO_CHAR(date, 'MM-DD') <= %s)")
     with cursor() as cur:
-        cur.execute("""
-            SELECT resort_id, EXTRACT(YEAR FROM date)::int AS yr, date,
-                   wind_gust_max_kmh AS g
+        cur.execute(f"""
+            SELECT resort_id,
+                   (EXTRACT(YEAR FROM date)
+                    - CASE WHEN EXTRACT(MONTH FROM date) >= 8 THEN 0 ELSE 1 END)::int
+                       AS yr,
+                   date, wind_gust_max_kmh AS g
             FROM climate_daily
-            WHERE TO_CHAR(date, 'MM-DD') BETWEEN %s AND %s
+            WHERE {window}
               AND wind_gust_max_kmh IS NOT NULL
             ORDER BY resort_id, date
         """, (start_md, end_md))

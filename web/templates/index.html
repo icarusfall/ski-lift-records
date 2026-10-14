@@ -3,147 +3,319 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ski Lift Tracker</title>
+<title>Ski Lift Records — will the lifts be running the week you go?</title>
+<meta name="description" content="Daily lift records for 36 high Alpine and Pyrenean ski resorts, set against 35 years of wind, snow depth and sun.">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: #f0f4f8; color: #1a202c; }
-  header { background: #2b6cb0; color: white; padding: 1rem 2rem; }
-  header h1 { font-size: 1.4rem; }
-  header p  { font-size: 0.85rem; opacity: 0.8; margin-top: 0.2rem; }
-  .container { max-width: 1200px; margin: 1.5rem auto; padding: 0 1rem; }
-  .links { margin-bottom: 1rem; font-size: 0.85rem; }
-  .links a { color: #2b6cb0; margin-right: 1rem; }
-  table { width: 100%; border-collapse: collapse; background: white;
-          border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  th { background: #2d3748; color: white; padding: 0.6rem 0.8rem;
-       text-align: left; font-size: 0.8rem; white-space: nowrap; }
-  td { padding: 0.5rem 0.8rem; border-bottom: 1px solid #e2e8f0;
-       font-size: 0.85rem; vertical-align: middle; }
-  tr:last-child td { border-bottom: none; }
-  tr:hover td { background: #ebf8ff; }
-  .bar-wrap { width: 120px; background: #e2e8f0; border-radius: 4px;
-              height: 12px; overflow: hidden; display: inline-block; vertical-align: middle; }
-  .bar-fill  { height: 100%; border-radius: 4px; transition: width .3s; display: block; }
-  .pct-label { font-size: 0.8rem; color: #4a5568; margin-left: 6px; }
-  .error     { color: #c53030; font-size: 0.78rem; }
-  .hol-badge { background: #f6ad55; color: #744210; font-size: 0.7rem;
-               padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
-  .area-header td { background: #edf2f7; font-weight: 600; font-size: 0.78rem;
-                    color: #4a5568; padding: 0.3rem 0.8rem; }
-  a.resort-link { color: #2b6cb0; text-decoration: none; }
-  a.resort-link:hover { text-decoration: underline; }
-  .flag { margin-right: 4px; }
-  .banner { padding: 0.7rem 1rem; border-radius: 6px; margin-bottom: 1rem;
-            font-size: 0.85rem; border-left: 4px solid; }
-  .banner a { color: inherit; }
-  .banner-warn { background: #fff5f5; border-color: #c53030; color: #742a2a; }
-  .banner-info { background: #ebf8ff; border-color: #2b6cb0; color: #2c5282; }
+  :root {
+    --surface: #fcfcfb; --page: #f0f4f8; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --grid: #e1e0d9; --baseline: #c3c2b7; --wash: #f0efec;
+    --blue: #2b6cb0;
+  }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--page); color: var(--ink); line-height: 1.5; }
+  a { color: var(--blue); }
+  .wrap { max-width: 1150px; margin: 0 auto; padding: 0 1rem; }
+  .hero { padding: 2.4rem 0 1.6rem; display: grid; gap: 1.5rem 3rem;
+          grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: center; }
+  .hero h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); line-height: 1.15;
+             letter-spacing: -0.02em; text-wrap: balance; }
+  .hero p { color: var(--ink-2); font-size: 1.02rem; margin-top: 0.9rem; max-width: 38rem; }
+  .picker { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
+            border-radius: 10px; padding: 1.1rem 1.2rem; }
+  .picker h2 { font-size: 0.95rem; margin-bottom: 0.7rem; }
+  .picker label { display: block; font-size: 0.74rem; color: var(--muted);
+                  margin: 0.6rem 0 0.2rem; }
+  .picker select { width: 100%; border: 1px solid var(--baseline); border-radius: 6px;
+                   padding: 0.45rem 0.5rem; font-size: 0.92rem; background: white;
+                   color: var(--ink); font-family: inherit; }
+  .picker button { width: 100%; margin-top: 0.9rem; background: var(--blue); color: white;
+                   border: 0; border-radius: 6px; padding: 0.6rem; font-size: 0.95rem;
+                   font-weight: 600; cursor: pointer; font-family: inherit; }
+  .picker button:hover { background: #245a94; }
+  .picker .or { font-size: 0.78rem; color: var(--muted); margin-top: 0.6rem; text-align: center; }
+
+  section { margin: 2.2rem 0; }
+  section > h2 { font-size: 1.25rem; letter-spacing: -0.01em; }
+  section > .lede { color: var(--ink-2); font-size: 0.92rem; max-width: 46rem;
+                    margin: 0.25rem 0 0.9rem; }
+  .eyebrow { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+             color: var(--muted); margin-bottom: 0.15rem; }
+
+  .mapframe { width: 100%; height: min(68vh, 600px); min-height: 380px; border: 0;
+              border-radius: 10px; background: var(--grid); display: block;
+              box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+  .tries { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+           gap: 0.7rem; margin-top: 0.8rem; }
+  .card { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
+          border-radius: 8px; padding: 0.85rem 1rem; text-decoration: none;
+          color: inherit; display: block; }
+  a.card:hover { border-color: var(--blue); }
+  .card b { display: block; font-size: 0.92rem; color: var(--blue); }
+  .card span { font-size: 0.82rem; color: var(--ink-2); }
+
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+            gap: 1rem; }
+  .group { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
+           border-radius: 8px; padding: 1rem 1.1rem; }
+  .group h3 { font-size: 0.98rem; }
+  .group > p { font-size: 0.82rem; color: var(--ink-2); margin: 0.15rem 0 0.6rem; }
+  .group ul { list-style: none; }
+  .group li { padding: 0.4rem 0; border-top: 1px solid var(--grid); font-size: 0.84rem;
+              color: var(--ink-2); }
+  .group li a { font-weight: 600; text-decoration: none; }
+  .group li a:hover { text-decoration: underline; }
+
+  /* the week that started it */
+  .story { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
+           border-radius: 10px; padding: 1.2rem 1.3rem; }
+  .story p { font-size: 0.92rem; color: var(--ink-2); max-width: 48rem; }
+  .story p + p { margin-top: 0.5rem; }
+  .days { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+          gap: 6px; margin: 1rem 0 0.5rem; }
+  .day { border-radius: 6px; padding: 0.5rem 0.4rem; text-align: center;
+         border: 1px solid var(--grid); background: var(--wash); }
+  .day .d { font-size: 0.7rem; opacity: 0.85; }
+  .day .g { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .day .u { font-size: 0.64rem; opacity: 0.85; }
+  .day .e { font-size: 0.72rem; margin-top: 0.3rem; padding-top: 0.3rem;
+            border-top: 1px solid rgba(128,128,128,0.35); font-variant-numeric: tabular-nums; }
+  .note { font-size: 0.76rem; color: var(--muted); max-width: 48rem; }
+
+  .findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+              gap: 0.8rem; }
+  .finding { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
+             border-radius: 8px; padding: 0.9rem 1rem; }
+  .finding h3 { font-size: 0.92rem; margin-bottom: 0.25rem; }
+  .finding p { font-size: 0.82rem; color: var(--ink-2); }
+  .finding a { font-size: 0.8rem; font-weight: 600; text-decoration: none;
+               display: inline-block; margin-top: 0.4rem; }
+
+  footer { border-top: 1px solid var(--baseline); margin-top: 2.5rem; padding: 1.2rem 0 2.5rem;
+           font-size: 0.8rem; color: var(--ink-2); }
+  footer p + p { margin-top: 0.4rem; }
+  .warn { color: #9b2c2c; }
+
+  @media (max-width: 780px) {
+    .hero { grid-template-columns: 1fr; padding-top: 1.6rem; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>⛷ Ski Lift Tracker</h1>
-  <p>Daily noon-UTC snapshots — high-altitude European resorts</p>
-</header>
-<div class="container">
-  {% if status.stale %}
-    <div class="banner banner-warn">
-      ⚠ <strong>No data collected for {{ status.age_days }} days.</strong>
-      Last snapshot {{ status.last_date }}. The daily collector may have stopped —
-      check the <a href="/admin">control panel</a> and the Railway cron service.
+{% set active = "home" %}{% include "_nav.html" %}
+<div class="wrap">
+
+  <div class="hero">
+    <div>
+      <h1>Will the lifts be running the week you go?</h1>
+      <p>Ski Lift Records notes which lifts are open at {{ resorts | length }} high Alpine
+         and Pyrenean resorts, every day of the season, and sets that against
+         {{ 2026 - climate_from.year }} years of wind, temperature, snow depth and sun.
+         Pick a resort and a week to see what the weather usually does to it —
+         with the working shown, not just the answer.</p>
     </div>
-  {% elif status.paused %}
-    <div class="banner banner-info">
-      ⏸ Collection is paused for the off-season. Last snapshot {{ status.last_date }}.
-      {% if status.resume_date %}Scheduled to resume {{ status.resume_date }}.{% endif %}
-    </div>
-  {% endif %}
-  <div class="links">
-    <a href="/explore">🔍 Data Explorer</a>
-    <a href="/map">🗺 Lift Map</a>
-    <a href="/api/snapshots.csv">⬇ Latest CSV</a>
-    <a href="/api/full-history.csv">⬇ Full History CSV</a>
-    <a href="/api/snapshots.json">⬇ JSON</a>
-    <a href="/admin">🎛 Admin</a>
+    <form class="picker" id="picker">
+      <h2>Start with your trip</h2>
+      <label for="pResort">Resort</label>
+      <select id="pResort">
+        {% for r in resorts %}
+          <option value="{{ r.id }}" {{ 'selected' if r.id == 'cervinia' }}>{{ r.name }}</option>
+        {% endfor %}
+      </select>
+      <label for="pWeek">Week</label>
+      <select id="pWeek">
+        {% for name, a, b in weeks %}
+          <option value="{{ a }}_{{ b }}" {{ 'selected' if a == '02-14' }}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Show me that week →</button>
+      <div class="or">or <a href="/resorts">browse all {{ resorts | length }} resorts</a></div>
+    </form>
   </div>
-  <table>
-    <thead>
-      <tr>
-        <th>Resort</th>
-        <th>Area</th>
-        <th>Alt.</th>
-        <th>Date</th>
-        <th>Lifts</th>
-        <th>% Open</th>
-        <th>Pistes (km)</th>
-        <th>Source</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% set current_area = namespace(value="") %}
-    {% for row in rows %}
-      {% set area_key = row.country + "|" + (row.area or "") %}
-      {% if area_key != current_area.value %}
-        {% set current_area.value = area_key %}
-        <tr class="area-header">
-          <td colspan="8">
-            {% set flags = {"FR": "🇫🇷", "CH": "🇨🇭", "IT": "🇮🇹", "AT": "🇦🇹", "ES": "🇪🇸", "AD": "🇦🇩"} %}
-            {{ flags.get(row.country, row.country) }} {{ row.area or row.country }}
-          </td>
-        </tr>
+
+  <section>
+    <div class="eyebrow">The map</div>
+    <h2>Turn the wind up and watch the mountain close</h2>
+    <p class="lede">Every lift, strung over 3D terrain. Press <b>▶ Blow</b> to sweep the
+       gust from calm to severe: the lifts go red in the order they have actually
+       shut, as far as one season of records can tell.</p>
+    <iframe class="mapframe" title="Lift map of Cervinia, coloured by what the model predicts"
+            src="/map?resort=cervinia&mode=predict&gust=70&embed=1" loading="lazy"></iframe>
+    <div class="tries">
+      <a class="card" href="/map?resort=cervinia&mode=predict&gust=90">
+        <b>What shuts at 90 km/h?</b>
+        <span>The full map in prediction mode, for any of the resorts.</span></a>
+      <a class="card" href="/map?resort=cervinia&sun=on&date=2027-02-14">
+        <b>When does this terrace lose the sun?</b>
+        <span>Click any point on the mountain for its sun hours on a date you choose.</span></a>
+      <a class="card" href="/map?resort=cervinia&pistes=on">
+        <b>Which lifts ran most last season?</b>
+        <span>Lifts coloured by the share of days they were open, with the pistes drawn in.</span></a>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Where this started</div>
+    <h2>One half-term week in Cervinia</h2>
+    <div class="story">
+      <p>The project began with a trip to Cervinia over 14–22 February 2026 and a
+         question: <i>is it always like this?</i> Collection started the day after, so
+         the lift record never saw that week — but the weather record did. Below is
+         each day's strongest gust, shaded darker the harder it blew, and the share
+         of lifts the model would expect to have been running in wind like that.</p>
+      <div class="days" id="days"><div class="note">Loading the week…</div></div>
+      <p class="note" id="storyNote"></p>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">The data explorer</div>
+    <h2>Then dig as far as you like</h2>
+    <p class="lede">Ten views over the same data, in three groups. Every chart can be
+       filtered, and every view has its own link.</p>
+    <div class="groups">
+      <div class="group">
+        <h3>The lift record</h3>
+        <p>What actually happened, day by day.</p>
+        <ul>
+          <li><a href="/explore#tab=heatmap">Season heatmap</a> — every resort, every day, at a glance.</li>
+          <li><a href="/explore#tab=compare">Compare resorts</a> — lifts, snow and wind on one timeline.</li>
+          <li><a href="/explore#tab=league">League table</a> — who stayed open, in calm and in wind.</li>
+          <li><a href="/explore#tab=lifts">Lift by lift</a> — the days each one ran, held or shut.</li>
+        </ul>
+      </div>
+      <div class="group">
+        <h3>Your week</h3>
+        <p>What a given week of the calendar is usually like.</p>
+        <ul>
+          <li><a href="/explore#tab=climate">35 years of weather &amp; snow</a> — one point per season since {{ climate_from.year }}, with trends.</li>
+          <li><a href="/explore#tab=plan">Rank resorts for a week</a> — expected lifts open and the odds of a lost day.</li>
+          <li><a href="/explore#tab=sun">Sun &amp; shadow</a> — when the ridge takes the sun off each lift.</li>
+        </ul>
+      </div>
+      <div class="group">
+        <h3>The working</h3>
+        <p>How the numbers were arrived at, and what failed.</p>
+        <ul>
+          <li><a href="/explore#tab=model">How it works</a> — the model laid out, errors included.</li>
+          <li><a href="/explore#tab=scatter">Scatter lab</a> — plot anything against anything, split any way.</li>
+          <li><a href="/explore#tab=wind">Wind vs open</a> — the basic relationship, resort by resort.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">So far</div>
+    <h2>What one season of records says</h2>
+    <p class="lede">Early findings. One part-season is thin evidence, and each of
+       these links to the chart it came from so you can judge it yourself.</p>
+    <div class="findings">
+      <div class="finding">
+        <h3>Wind matters more at some resorts than others</h3>
+        <p>Across all resorts the link between gusts and closures is weak. Split by
+           resort it is not: some fall away sharply in wind while others barely move.</p>
+        <a href="/explore#tab=scatter">See it in the scatter lab →</a>
+      </div>
+      <div class="finding">
+        <h3>Some mountains close in a fixed order</h3>
+        <p>At Cervinia and Méribel the same lifts go first each time, which makes
+           closures predictable lift by lift. At St Anton and Tignes they do not.</p>
+        <a href="/explore#tab=model&resort=cervinia">See the closure order →</a>
+      </div>
+      <div class="finding">
+        <h3>Wind direction added nothing</h3>
+        <p>Knowing which way the wind blew across each lift did not improve on gust
+           speed alone. It is reported here as a null rather than left out.</p>
+        <a href="/explore#tab=model&resort=cervinia">What was tried and rejected →</a>
+      </div>
+      <div class="finding">
+        <h3>The freezing level is climbing</h3>
+        <p>At Cervinia in February half-term the estimated 0&nbsp;°C line has risen by
+           roughly 230&nbsp;m a decade since 1991 (95% interval 63 to 395).</p>
+        <a href="/explore#tab=climate&resorts=cervinia&from=02-14&to=02-22&metric=freezing_m">See 35 years of it →</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      {% if span.first %}
+        Lift records so far: <b>{{ "{:,}".format(readings) }}</b> lift readings over
+        <b>{{ span.days }}</b> days, {{ span.first.strftime("%d %b %Y") }}
+        to {{ span.last.strftime("%d %b %Y") }}.
       {% endif %}
-      <tr>
-        <td><a class="resort-link" href="/resort/{{ row.resort_id }}">{{ row.name }}</a></td>
-        <td>{{ row.area or "—" }}</td>
-        <td>{{ row.top_altitude_m }}m</td>
-        <td>
-          {{ row.snapshot_date }}
-          {% if row.is_uk_school_holiday %}
-            <span class="hol-badge">{{ row.holiday_name }}</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if row.scrape_error %}
-            <span class="error">Error</span>
-          {% else %}
-            {{ row.lifts_open }} / {{ row.lifts_total }}
-          {% endif %}
-        </td>
-        <td>
-          {% if row.pct_lifts_open is not none and not row.scrape_error %}
-            {% set pct = row.pct_lifts_open | float %}
-            {% if pct >= 80 %}{% set colour = "#48bb78" %}
-            {% elif pct >= 50 %}{% set colour = "#ed8936" %}
-            {% else %}{% set colour = "#f56565" %}{% endif %}
-            <span class="bar-wrap">
-              <span class="bar-fill" style="width:{{ pct }}%; background:{{ colour }};"></span>
-            </span>
-            <span class="pct-label">{{ "%.0f"|format(pct) }}%</span>
-          {% else %}
-            —
-          {% endif %}
-        </td>
-        <td>
-          {% if row.pistes_open_km %}
-            {{ row.pistes_open_km }} / {{ row.pistes_total_km }} km
-          {% else %}—{% endif %}
-          {% if row.snow_depth_mountain_cm or row.snow_depth_valley_cm %}
-            <br><span style="font-size:0.75rem; color:#718096;">
-              top {{ row.snow_depth_mountain_cm }}cm / valley {{ row.snow_depth_valley_cm }}cm
-              {% if row.last_snowfall_date %} · last snow {{ row.last_snowfall_date }}{% endif %}
-              {% if row.wind_gust_max_kmh %} · wind {{ row.wind_gust_max_kmh }} km/h{% endif %}
-            </span>
-          {% endif %}
-        </td>
-        <td style="font-size:0.75rem; color:#718096;">{{ row.source }}</td>
-      </tr>
-    {% else %}
-      <tr><td colspan="8" style="padding:2rem; text-align:center; color:#718096;">
-        No data yet. Run the collector first.
-      </td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
+      {% if status.stale %}
+        <span class="warn">No reading for {{ status.age_days }} days — the collector may need attention.</span>
+      {% elif status.paused %}
+        Collection is paused for the summer{% if status.resume_date %} and resumes on {{ status.resume_date }}{% endif %}.
+      {% else %}
+        Collected twice a day through the season.
+      {% endif %}
+    </p>
+    <p>Weather history is the ERA5 reanalysis via Open-Meteo; lift and piste lines are
+       from OpenStreetMap contributors. Download the data:
+       <a href="/api/full-history.csv">full history (CSV)</a> ·
+       <a href="/api/snapshots.csv">latest readings (CSV)</a> ·
+       <a href="/api/snapshots.json">JSON</a>.</p>
+  </footer>
 </div>
+
+<script>
+"use strict";
+document.getElementById("picker").addEventListener("submit", function (e) {
+  e.preventDefault();
+  var w = document.getElementById("pWeek").value.split("_");
+  location.href = "/resort/" + document.getElementById("pResort").value
+                + "?from=" + w[0] + "&to=" + w[1];
+});
+
+/* The week that started it. Coloured by wind band, darker for stronger: the
+   model's expected share of lifts moves only a few points across a week, so
+   colouring by that would paint nine near-identical cells. */
+(function () {
+  var BAND = { calm: ["#cde2fb", "#0b0b0b"], breezy: ["#9ec5f4", "#0b0b0b"],
+               windy: ["#2a78d6", "#ffffff"], severe: ["#0d366b", "#ffffff"] };
+  var DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var host = document.getElementById("days");
+  Promise.all([
+    fetch("/api/hindcast.json?resort=cervinia&from=2026-02-14&to=2026-02-22").then(function (r) { return r.json(); }),
+    fetch("/api/outlook.json?from=02-14&to=02-22").then(function (r) { return r.json(); })
+      .catch(function () { return {}; }),
+  ]).then(function (res) {
+      var d = res[0];
+      var usual = (res[1].resorts || []).filter(function (r) { return r.resort_id === "cervinia"; })[0];
+      if (!d.days || !d.days.length) { host.textContent = "No weather record for that week."; return; }
+      host.innerHTML = "";
+      var windy = 0, lo = 100, hi = 0;
+      d.days.forEach(function (x) {
+        var dt = new Date(x.date + "T12:00:00Z");
+        var c = BAND[x.band] || ["#f0efec", "#0b0b0b"];
+        var el = document.createElement("div");
+        el.className = "day";
+        el.style.background = c[0]; el.style.borderColor = c[0]; el.style.color = c[1];
+        var pct = x.expected_pct_open;
+        if (pct != null) { lo = Math.min(lo, pct); hi = Math.max(hi, pct); }
+        if (x.gust >= 60) windy++;
+        el.innerHTML = '<div class="d">' + DOW[dt.getUTCDay()] + " " + dt.getUTCDate()
+          + '</div><div class="g">' + (x.gust == null ? "—" : Math.round(x.gust))
+          + '</div><div class="u">km/h · ' + (x.band || "?") + '</div><div class="e">'
+          + (pct == null ? "no estimate" : "~" + Math.round(pct) + "% of lifts") + "</div>";
+        host.appendChild(el);
+      });
+      document.getElementById("storyNote").textContent =
+        windy + " of " + d.days.length + " days gusted past 60 km/h"
+        + (usual ? ". A run of three or more such days in this week has turned up in about "
+                   + Math.round(usual.p_storm_run * 100) + "% of seasons since 1991" : "")
+        + ". This is a reconstruction from the ERA5 weather record, not an observation. "
+        + "On the mountain it was a bad week: most of it was shut for about half the days. "
+        + "The model's answer barely moves — " + Math.round(lo) + " to " + Math.round(hi)
+        + "% of lifts across the week — so it undersells a week like this badly. It knows "
+        + "only four bands of wind and has half a season of Cervinia to learn from; this "
+        + "winter's records are the chance to do better.";
+    })
+    .catch(function () { host.textContent = "Could not load the week."; });
+})();
+</script>
 </body>
 </html>

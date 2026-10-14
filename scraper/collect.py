@@ -123,7 +123,7 @@ def collect_all(resort_filter: str | None = None, slot: str = "midday",
         print(f"  Catch-up: {len(resorts)} resort(s) still missing for {today} ({slot}).")
 
     print(f"\n{'='*60}")
-    print(f"  Ski Lift Tracker — {today.isoformat()} UTC ({slot})")
+    print(f"  Ski Lift Records — {today.isoformat()} UTC ({slot})")
     print(f"  Collecting {len(resorts)} resort(s)")
     print(f"{'='*60}\n")
 

@@ -3,172 +3,435 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ resort_id }} — Ski Lift Tracker</title>
+<title>{{ resort.name }} — Ski Lift Records</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: #f0f4f8; color: #1a202c; }
-  header { background: #2b6cb0; color: white; padding: 1rem 2rem; }
-  header a { color: #bee3f8; font-size: 0.85rem; }
-  h2 { font-size: 1.2rem; margin-bottom: 1rem; }
-  .container { max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; }
-  .card { background: white; border-radius: 8px; padding: 1.2rem;
-          box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 1.5rem; }
-  canvas { max-height: 300px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  th { background: #2d3748; color: white; padding: 0.5rem 0.7rem; text-align: left; }
-  td { padding: 0.4rem 0.7rem; border-bottom: 1px solid #e2e8f0; }
+  :root {
+    --surface: #fcfcfb; --page: #f0f4f8; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --grid: #e1e0d9; --baseline: #c3c2b7; --wash: #f0efec;
+    --blue: #2b6cb0;
+  }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--page); color: var(--ink); line-height: 1.45; }
+  a { color: var(--blue); }
+  .container { max-width: 1100px; margin: 1.3rem auto 3rem; padding: 0 1rem; }
+  .crumb { font-size: 0.8rem; text-decoration: none; }
+  h1 { font-size: 1.7rem; letter-spacing: -0.015em; margin-top: 0.2rem; }
+  .meta { font-size: 0.88rem; color: var(--ink-2); margin-bottom: 1rem; }
+  h2 { font-size: 1.08rem; margin-bottom: 0.15rem; }
+  .sub { font-size: 0.84rem; color: var(--ink-2); margin-bottom: 0.8rem; max-width: 48rem; }
+  .card { background: var(--surface); border: 1px solid rgba(11,11,11,0.10);
+          border-radius: 8px; padding: 1.1rem 1.2rem; margin-bottom: 1.1rem; }
+  .weeks { display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center;
+           font-size: 0.82rem; margin-bottom: 1rem; }
+  .weeks span { color: var(--muted); margin-right: 0.2rem; }
+  .pill { text-decoration: none; padding: 0.28rem 0.8rem; border-radius: 999px;
+          border: 1px solid var(--baseline); color: var(--ink-2); background: none;
+          font-size: 0.8rem; cursor: pointer; font-family: inherit; }
+  .pill.active { background: var(--blue); border-color: var(--blue); color: white;
+                 font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+           gap: 0.6rem; margin-bottom: 0.6rem; }
+  .stat { background: var(--wash); border: 1px solid var(--grid); border-radius: 6px;
+          padding: 0.6rem 0.75rem; }
+  .stat-v { font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-l { font-size: 0.76rem; color: var(--ink-2); }
+  .stat-n { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
+  .note { font-size: 0.76rem; color: var(--muted); max-width: 48rem; }
+  .mapframe { width: 100%; height: min(62vh, 540px); min-height: 360px; border: 0;
+              border-radius: 8px; background: var(--grid); display: block; }
+  .more { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 0.6rem; }
+  .more a { display: block; border: 1px solid var(--grid); border-radius: 6px;
+            padding: 0.6rem 0.8rem; text-decoration: none; background: var(--surface); }
+  .more a:hover { border-color: var(--blue); }
+  .more b { display: block; font-size: 0.86rem; }
+  .more span { font-size: 0.78rem; color: var(--ink-2); }
+  canvas { max-height: 280px; }
+  details { margin-top: 0.9rem; }
+  summary { cursor: pointer; font-size: 0.86rem; color: var(--blue); font-weight: 600; }
+  .scroll { overflow-x: auto; margin-top: 0.6rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  th { background: #2d3748; color: white; padding: 0.4rem 0.6rem; text-align: left;
+       white-space: nowrap; }
+  td { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--grid); white-space: nowrap; }
   .open   { color: #276749; font-weight: 600; }
   .closed { color: #c53030; }
   .link-lift { background: #ebf8ff; }
   .hol { background: #fffbeb; }
-  .days-picker { margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-  .days-picker a { text-decoration: none; padding: 0.3rem 0.7rem; border-radius: 4px; background: #e2e8f0; color: #2d3748; }
-  .days-picker a.active { background: #2b6cb0; color: white; }
+  svg text { font-family: inherit; }
 </style>
 </head>
 <body>
-<header>
-  <a href="/">← All resorts</a>
-  <h1 style="margin-top:0.3rem;">{{ resort_id }}</h1>
-</header>
+{% set active = "resorts" %}{% include "_nav.html" %}
+{# Named, not flagged: Windows has no flag glyphs and prints the bare letters. #}
+{% set countries = {"FR": "France", "CH": "Switzerland", "IT": "Italy", "AT": "Austria", "ES": "Spain", "AD": "Andorra"} %}
+{% set months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"] %}
+{% macro md(v) %}{{ v[3:] | int }} {{ months[(v[:2] | int) - 1] }}{% endmacro %}
+{% set week_label = md(start_md) ~ " – " ~ md(end_md) %}
+{% set week_q = "from=" ~ start_md ~ "&to=" ~ end_md %}
 <div class="container">
+  <a class="crumb" href="/resorts">← All resorts</a>
+  <h1>{{ resort.name }}</h1>
+  <p class="meta">
+    {{ countries.get(resort.country, resort.country) }} ·
+    {% if resort.area %}{{ resort.area }} · {% endif %}top lift at {{ resort.top_altitude_m }} m
+  </p>
 
-  <div class="days-picker">
-    Show:
-    {% for d in [7, 14, 20, 30, 60, 90] %}
-      <a href="?days={{ d }}" class="{{ 'active' if days == d else '' }}">{{ d }}d</a>
+  <div class="weeks">
+    <span>Your week:</span>
+    {% for name, a, b in weeks %}
+      <a class="pill {{ 'active' if a == start_md and b == end_md }}"
+         href="?from={{ a }}&to={{ b }}">{{ name }}</a>
     {% endfor %}
   </div>
 
-  <!-- % Open over time chart -->
+  <!-- 1. the week: lifts -->
   <div class="card">
-    <h2>Lifts Open (%) — last {{ days }} days</h2>
-    <canvas id="pctChart"></canvas>
+    <h2>Lifts in the week of {{ week_label }}</h2>
+    <p class="sub">How often that week has been windy since 1991, combined with how
+       this resort's lifts responded to wind in the season on record.</p>
+    <div class="stats" id="outlook"><div class="note">Working it out…</div></div>
+    <p class="note" id="outlookNote"></p>
   </div>
 
-  <!-- Individual lift history (only shown if we have named lift data) -->
-  {% if lift_history %}
+  <!-- 2. the week: 35 years -->
   <div class="card">
-    <h2>Individual Lift History</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Lift</th>
-          <th>Link?</th>
-          {% set dates = lift_history | map(attribute='snapshot_date') | unique | list %}
-          {% for d in dates %}<th>{{ d.strftime("%d/%m") }}</th>{% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% set lift_data = {} %}
-        {% for row in lift_history %}
-          {% if row.name not in lift_data %}
-            {% set _ = lift_data.update({row.name: {"is_link": row.is_link, "dates": {}}}) %}
-          {% endif %}
-          {% set _ = lift_data[row.name]["dates"].update({row.snapshot_date: row.status}) %}
-        {% endfor %}
-        {% for lift_name, data in lift_data.items() | sort %}
-          <tr class="{{ 'link-lift' if data.is_link else '' }}">
-            <td>{{ lift_name }}</td>
-            <td>{{ "🔗" if data.is_link else "" }}</td>
-            {% for d in dates %}
-              {% set status = data.dates.get(d, "—") %}
-              <td class="{{ 'open' if status == 'open' else ('closed' if status == 'closed' else '') }}">
-                {{ "✓" if status == "open" else ("✗" if status == "closed" else "—") }}
-              </td>
-            {% endfor %}
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <h2>That week, every season since 1991</h2>
+    <p class="sub">One point per season, averaged over {{ week_label }}, from the ERA5
+       reanalysis at summit height. The line is the trend; it is dashed when the
+       trend could plausibly be zero.</p>
+    <div class="weeks" id="metricPills" style="margin-bottom:0.6rem;"></div>
+    <div id="climChart"><div class="note">Loading 35 years…</div></div>
+    <p class="note" id="climNote" style="margin-top:0.4rem;"></p>
+  </div>
+
+  <!-- 3. the map -->
+  {% if resort.ways %}
+  <div class="card">
+    <h2>The mountain</h2>
+    <p class="sub">Lifts coloured by the share of days each was open. Switch to the
+       full map to turn the wind up, draw the pistes or ask when any spot loses the sun.</p>
+    <iframe class="mapframe" title="Lift map of {{ resort.name }}" loading="lazy"
+            src="/map?resort={{ resort.id }}&embed=1"></iframe>
   </div>
   {% endif %}
 
-  <!-- Daily summary table -->
+  <!-- 4. deeper -->
   <div class="card">
-    <h2>Daily Summary</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th><th>Open</th><th>Total</th><th>%</th>
-          <th>Pistes Open km</th><th>Snow top</th><th>Snow valley</th>
-          <th>Condition</th><th>Last snow</th><th>Piste cond.</th><th>Aval.</th>
-          <th>Wind gust</th><th>Temp</th><th>Fresh snow</th>
-          <th>Holiday</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for row in history | reverse %}
-        <tr class="{{ 'hol' if row.is_uk_school_holiday else '' }}">
-          <td>{{ row.snapshot_date }}</td>
-          <td>{{ row.lifts_open or "—" }}</td>
-          <td>{{ row.lifts_total or "—" }}</td>
-          <td>{{ "%.0f%%"|format(row.pct_lifts_open) if row.pct_lifts_open else "—" }}</td>
-          <td>{{ row.pistes_open_km or "—" }}</td>
-          <td>{{ (row.snow_depth_mountain_cm ~ " cm") if row.snow_depth_mountain_cm else "—" }}</td>
-          <td>{{ (row.snow_depth_valley_cm ~ " cm") if row.snow_depth_valley_cm else "—" }}</td>
-          <td>{{ row.snow_condition or "—" }}</td>
-          <td>{{ row.last_snowfall_date or "—" }}</td>
-          <td>{{ row.piste_conditions or "—" }}</td>
-          <td>{{ row.avalanche_danger or "—" }}</td>
-          <td>{{ (row.wind_gust_max_kmh ~ " km/h") if row.wind_gust_max_kmh else "—" }}</td>
-          <td>{{ (row.temp_min_c ~ "° / " ~ row.temp_max_c ~ "°") if row.temp_min_c is not none else "—" }}</td>
-          <td>{{ (row.fresh_snow_cm ~ " cm") if row.fresh_snow_cm else "—" }}</td>
-          <td>{{ row.holiday_name or "" }}</td>
-        </tr>
+    <h2>Go deeper on {{ resort.name }}</h2>
+    <p class="sub">The same resort, opened in the data explorer.</p>
+    <div class="more">
+      <a href="/explore#tab=climate&resorts={{ resort.id }}&{{ week_q }}">
+        <b>35 years, in full</b><span>Ten weather measures, measured snow stations, other resorts alongside.</span></a>
+      <a href="/explore#tab=sun&resort={{ resort.id }}">
+        <b>Sun &amp; shadow</b><span>When the ridge takes the sun off each lift station.</span></a>
+      {% if resort.named_lifts %}
+      <a href="/explore#tab=lifts&resort={{ resort.id }}">
+        <b>Lift by lift</b><span>Days each lift ran, was held or stayed shut, with the reasons given.</span></a>
+      <a href="/explore#tab=model&resort={{ resort.id }}">
+        <b>Which lifts shut first</b><span>The closure order, how well it holds, and where it was wrong.</span></a>
+      {% endif %}
+      <a href="/explore#tab=compare&resorts={{ resort.id }}">
+        <b>Compare with other resorts</b><span>Lifts, snow and wind through the season on one timeline.</span></a>
+      <a href="/explore#tab=plan&{{ week_q }}">
+        <b>Is somewhere else a safer bet?</b><span>All resorts ranked for the same week.</span></a>
+    </div>
+  </div>
+
+  <!-- 5. the record -->
+  <div class="card">
+    <h2>The lift record</h2>
+    {% if history %}
+    <p class="sub">Share of lifts open at midday, for the last {{ days }} days on record
+       (to {{ history[-1].snapshot_date }}). Orange bars are UK school holidays.</p>
+    <div class="weeks" style="margin-bottom:0.6rem;">
+      <span>Show:</span>
+      {% for d in [14, 30, 60, 90] %}
+        <a class="pill {{ 'active' if days == d }}" href="?{{ week_q }}&days={{ d }}">{{ d }} days</a>
       {% endfor %}
-      </tbody>
-    </table>
+    </div>
+    <canvas id="pctChart"></canvas>
+
+    {% if lift_history %}
+    <details>
+      <summary>Every lift, day by day</summary>
+      <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Lift</th>
+            <th>Link?</th>
+            {% set dates = lift_history | map(attribute='snapshot_date') | unique | list %}
+            {% for d in dates %}<th>{{ d.strftime("%d/%m") }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% set lift_data = {} %}
+          {% for row in lift_history %}
+            {% if row.name not in lift_data %}
+              {% set _ = lift_data.update({row.name: {"is_link": row.is_link, "dates": {}}}) %}
+            {% endif %}
+            {% set _ = lift_data[row.name]["dates"].update({row.snapshot_date: row.status}) %}
+          {% endfor %}
+          {% for lift_name, data in lift_data.items() | sort %}
+            <tr class="{{ 'link-lift' if data.is_link else '' }}">
+              <td>{{ lift_name }}</td>
+              <td>{{ "🔗" if data.is_link else "" }}</td>
+              {% for d in dates %}
+                {% set status = data.dates.get(d, "—") %}
+                <td class="{{ 'open' if status == 'open' else ('closed' if status == 'closed' else '') }}">
+                  {{ "✓" if status == "open" else ("✗" if status == "closed" else "—") }}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </details>
+    {% endif %}
+
+    <details>
+      <summary>Daily readings</summary>
+      <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Open</th><th>Total</th><th>%</th>
+            <th>Pistes Open km</th><th>Snow top</th><th>Snow valley</th>
+            <th>Condition</th><th>Last snow</th><th>Piste cond.</th>
+            <th>Wind gust</th><th>Temp</th><th>Fresh snow</th>
+            <th>Holiday</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in history | reverse %}
+          <tr class="{{ 'hol' if row.is_uk_school_holiday else '' }}">
+            <td>{{ row.snapshot_date }}</td>
+            <td>{{ row.lifts_open or "—" }}</td>
+            <td>{{ row.lifts_total or "—" }}</td>
+            <td>{{ "%.0f%%"|format(row.pct_lifts_open) if row.pct_lifts_open else "—" }}</td>
+            <td>{{ row.pistes_open_km or "—" }}</td>
+            <td>{{ (row.snow_depth_mountain_cm ~ " cm") if row.snow_depth_mountain_cm else "—" }}</td>
+            <td>{{ (row.snow_depth_valley_cm ~ " cm") if row.snow_depth_valley_cm else "—" }}</td>
+            <td>{{ row.snow_condition or "—" }}</td>
+            <td>{{ row.last_snowfall_date or "—" }}</td>
+            <td>{{ row.piste_conditions or "—" }}</td>
+            <td>{{ (row.wind_gust_max_kmh ~ " km/h") if row.wind_gust_max_kmh else "—" }}</td>
+            <td>{{ (row.temp_min_c ~ "° / " ~ row.temp_max_c ~ "°") if row.temp_min_c is not none else "—" }}</td>
+            <td>{{ (row.fresh_snow_cm ~ " cm") if row.fresh_snow_cm else "—" }}</td>
+            <td>{{ row.holiday_name or "" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </details>
+    {% else %}
+    <p class="sub">No readings yet for this resort.</p>
+    {% endif %}
   </div>
 </div>
 
 <script>
-const historyData = {{ history | tojson }};
-const labels = historyData.map(r => r.snapshot_date);
-const pcts   = historyData.map(r => r.pct_lifts_open);
-const isHols = historyData.map(r => r.is_uk_school_holiday);
+"use strict";
+const RESORT = {{ resort.id | tojson }};
+const FROM = {{ start_md | tojson }}, TO = {{ end_md | tojson }};
+const TOP_M = {{ resort.top_altitude_m | tojson }};
+const INK2 = "#52514e", MUTED = "#898781", GRID = "#e1e0d9", BLUE = "#2a78d6";
 
-const bgColours = pcts.map((p, i) => {
-  if (isHols[i]) return 'rgba(246,173,85,0.5)';
-  if (p === null) return 'rgba(200,200,200,0.3)';
-  if (p >= 80) return 'rgba(72,187,120,0.6)';
-  if (p >= 50) return 'rgba(237,137,54,0.6)';
-  return 'rgba(245,101,101,0.6)';
-});
-
-new Chart(document.getElementById('pctChart'), {
-  type: 'bar',
-  data: {
-    labels,
-    datasets: [{
-      label: '% Lifts Open',
-      data: pcts,
-      backgroundColor: bgColours,
-      borderColor: bgColours.map(c => c.replace('0.6','1').replace('0.5','1').replace('0.3','1')),
-      borderWidth: 1,
-    }]
-  },
-  options: {
-    responsive: true,
-    scales: {
-      y: { min: 0, max: 100, ticks: { callback: v => v + '%' } }
-    },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: ctx => {
-            const r = historyData[ctx.dataIndex];
-            let s = `${r.lifts_open}/${r.lifts_total} lifts (${ctx.parsed.y?.toFixed(0)}%)`;
-            if (r.holiday_name) s += ` 🏫 ${r.holiday_name}`;
-            return s;
-          }
-        }
-      }
-    }
+function el(tag, attrs, ...kids) {
+  const svg = ["svg","g","rect","line","path","circle","text","title"].includes(tag);
+  const n = svg ? document.createElementNS("http://www.w3.org/2000/svg", tag)
+                : document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
   }
-});
+  for (const k of kids) if (k) n.appendChild(k);
+  return n;
+}
+function stat(value, label, note) {
+  return el("div", { class: "stat" },
+    el("div", { class: "stat-v", text: value }),
+    el("div", { class: "stat-l", text: label }),
+    note ? el("div", { class: "stat-n", text: note }) : null);
+}
+
+/* ---------- the week: lifts ---------- */
+fetch(`/api/outlook.json?from=${FROM}&to=${TO}&days=7`)
+  .then(r => r.json())
+  .then(d => {
+    const host = document.getElementById("outlook");
+    host.innerHTML = "";
+    const list = d.resorts || [];
+    const i = list.findIndex(r => r.resort_id === RESORT);
+    if (i < 0) {
+      host.appendChild(el("div", { class: "note",
+        text: "Not enough lift readings in wind at this resort to estimate this yet." }));
+      return;
+    }
+    const me = list[i];
+    host.appendChild(stat(me.expected_pct_open.toFixed(0) + "%", "of lifts expected open",
+      "ranks " + (i + 1) + " of " + list.length + " resorts for this week"));
+    host.appendChild(stat((me.p_any_lost * 100).toFixed(0) + "%", "chance of a lost day in a 7-day trip",
+      "a day with under half the lifts running"));
+    host.appendChild(stat((me.p_storm_run * 100).toFixed(0) + "%", "of seasons had 3+ windy days in a row",
+      me.worst_run ? "longest run on record: " + me.worst_run + " days" : null));
+    document.getElementById("outlookNote").textContent =
+      "From " + me.climate_years + " seasons of weather and " + me.obs_days
+      + " observed days of lifts in wind at this resort"
+      + (me.thin ? ". That is thin, so the estimate is pulled toward the all-resort average" : "")
+      + ". An average over the week: a calm week will beat it and a stormy one will not.";
+  })
+  .catch(() => { document.getElementById("outlook").textContent = "Could not load the outlook."; });
+
+/* ---------- the week: 35 years ---------- */
+const METRICS = {
+  snow_depth: { label: "Snow depth at the summit", unit: "cm", dp: 0 },
+  freezing_m: { label: "Freezing level", unit: "m", dp: 0 },
+  snowfall:   { label: "Snowfall in the week", unit: "cm", dp: 0 },
+  sunshine:   { label: "Sunshine per day", unit: "h", dp: 1 },
+  gust:       { label: "Daily max gust", unit: "km/h", dp: 0 },
+  temp_mean:  { label: "Summit temperature", unit: "°C", dp: 1 },
+};
+let CLIM = null, metric = "snow_depth";
+const seasonLabel = y => y + "/" + String((y + 1) % 100).padStart(2, "0");
+
+// Least squares with a rough 95% interval, as in the explorer's climate tab.
+function trend(pts) {
+  const n = pts.length;
+  if (n < 6) return null;
+  const mx = pts.reduce((a, p) => a + p.x, 0) / n, my = pts.reduce((a, p) => a + p.y, 0) / n;
+  let sxx = 0, sxy = 0;
+  for (const p of pts) { sxx += (p.x - mx) ** 2; sxy += (p.x - mx) * (p.y - my); }
+  if (!sxx) return null;
+  const slope = sxy / sxx, intercept = my - slope * mx;
+  let ss = 0;
+  for (const p of pts) ss += (p.y - (slope * p.x + intercept)) ** 2;
+  const half = 2.03 * Math.sqrt((ss / (n - 2)) / sxx);
+  return { slope, intercept, lo: slope - half, hi: slope + half,
+           significant: (slope - half) * (slope + half) > 0 };
+}
+const fmt = (v, dp) => v.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+
+function drawClimate() {
+  const host = document.getElementById("climChart"), note = document.getElementById("climNote");
+  const pills = document.getElementById("metricPills");
+  pills.innerHTML = "";
+  for (const [k, m] of Object.entries(METRICS))
+    pills.appendChild(el("button", { class: "pill" + (k === metric ? " active" : ""),
+      text: m.label, onclick: () => { metric = k; drawClimate(); } }));
+  host.innerHTML = ""; note.textContent = "";
+  const M = METRICS[metric];
+  const pts = CLIM.years.filter(y => y[metric] != null).map(y => ({ x: y.season, y: y[metric] }));
+  if (pts.length < 2) {
+    host.appendChild(el("p", { class: "note", text: metric === "snow_depth"
+      ? "ERA5 has no usable snow depth here: the summit sits on permanent ice, where the "
+        + "model reports a fixed ceiling rather than a snowpack. The measured stations in "
+        + "the explorer's 35-year view are the better guide."
+      : "No data for this measure." }));
+    return;
+  }
+  const W = 1000, H = 300, m = { l: 56, r: 16, t: 14, b: 30 };
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = (y1 - y0) * 0.1 || 1; y0 -= pad; y1 += pad;
+  if (metric === "snow_depth" || metric === "snowfall" || metric === "sunshine") y0 = Math.max(0, y0);
+  const X = v => m.l + (v - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = v => H - m.b - (v - y0) / (y1 - y0) * (H - m.t - m.b);
+  const svg = el("svg", { width: "100%", viewBox: `0 0 ${W} ${H}`, style: "display:block;" });
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + (y1 - y0) * i / 4;
+    svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: GRID }));
+    svg.appendChild(el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": 11,
+      fill: MUTED, text: fmt(v, M.dp) }));
+  }
+  for (let s = Math.ceil(x0 / 5) * 5; s <= x1; s += 5)
+    svg.appendChild(el("text", { x: X(s), y: H - 10, "text-anchor": "middle", "font-size": 11,
+      fill: MUTED, text: seasonLabel(s) }));
+  svg.appendChild(el("text", { x: m.l, y: 10, "font-size": 11, fill: INK2, text: M.unit }));
+  // The summit, where the freezing level can be read against it.
+  if (metric === "freezing_m" && TOP_M > y0 && TOP_M < y1) {
+    svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(TOP_M), y2: Y(TOP_M),
+      stroke: INK2, "stroke-dasharray": "2 4" }));
+    svg.appendChild(el("text", { x: W - m.r, y: Y(TOP_M) - 4, "text-anchor": "end",
+      "font-size": 11, fill: INK2, text: "top lift " + TOP_M + " m" }));
+  }
+  const t = trend(pts);
+  if (t) svg.appendChild(el("line", { x1: X(x0), x2: X(x1), y1: Y(t.intercept + t.slope * x0),
+    y2: Y(t.intercept + t.slope * x1), stroke: BLUE, "stroke-width": 2, opacity: 0.55,
+    "stroke-dasharray": t.significant ? "" : "6 5" }));
+  svg.appendChild(el("path", { d: pts.map((p, i) => (i ? "L" : "M") + X(p.x) + " " + Y(p.y)).join(" "),
+    fill: "none", stroke: BLUE, "stroke-width": 1, opacity: 0.35 }));
+  for (const p of pts)
+    svg.appendChild(el("circle", { cx: X(p.x), cy: Y(p.y), r: 4, fill: BLUE },
+      el("title", { text: seasonLabel(p.x) + ": " + fmt(p.y, M.dp) + " " + M.unit })));
+  host.appendChild(svg);
+
+  const mean = a => a.reduce((s, p) => s + p.y, 0) / a.length;
+  const first = pts.filter(p => p.x < x0 + 10), last = pts.filter(p => p.x > x1 - 10);
+  const tiles = el("div", { class: "stats", style: "margin-top:0.7rem;" });
+  tiles.appendChild(stat(fmt(mean(last), M.dp) + " " + M.unit, "average, last 10 seasons"));
+  tiles.appendChild(stat(fmt(mean(first), M.dp) + " " + M.unit, "average, first 10 seasons"));
+  if (t) tiles.appendChild(stat((t.slope > 0 ? "+" : "") + fmt(t.slope * 10, M.dp) + " " + M.unit,
+    "change per decade", "95% interval " + fmt(t.lo * 10, M.dp) + " to " + fmt(t.hi * 10, M.dp)
+      + (t.significant ? "" : " — could be no change")));
+  host.appendChild(tiles);
+  if (metric === "snow_depth")
+    note.textContent = "Modelled by ERA5 for the grid cell around the summit, not measured on "
+      + "the piste. Read it for the shape over time rather than as a depth to expect underfoot.";
+  if (metric === "freezing_m")
+    note.textContent = "Estimated from the summit temperature at a standard lapse rate. "
+      + "Rain rather than snow falls below this line.";
+}
+fetch(`/api/climate.json?from=${FROM}&to=${TO}`)
+  .then(r => r.json())
+  .then(d => {
+    CLIM = d.resorts && d.resorts[RESORT];
+    if (!CLIM) { document.getElementById("climChart").textContent = "No climate record for this resort."; return; }
+    // Open on snow depth, the measure a skier cares about most, unless this
+    // is a glaciated cell with nothing to show for it.
+    if (!CLIM.years.some(y => y.snow_depth != null)) metric = "freezing_m";
+    drawClimate();
+  })
+  .catch(() => { document.getElementById("climChart").textContent = "Could not load the climate record."; });
+
+/* ---------- the lift record ---------- */
+const historyData = {{ history | tojson }};
+if (historyData.length && document.getElementById("pctChart")) {
+  const bg = historyData.map(r => {
+    const p = r.pct_lifts_open;
+    if (r.is_uk_school_holiday) return "rgba(237,161,0,0.75)";
+    if (p === null) return "rgba(200,200,200,0.3)";
+    return "rgba(42,120,214,0.75)";
+  });
+  new Chart(document.getElementById("pctChart"), {
+    type: "bar",
+    // Dates arrive as HTTP date strings; the axis wants "20 May".
+    data: { labels: historyData.map(r => new Date(r.snapshot_date).toLocaleDateString(
+              "en-GB", { day: "numeric", month: "short", timeZone: "UTC" })),
+            datasets: [{ label: "% lifts open", data: historyData.map(r => r.pct_lifts_open),
+                         backgroundColor: bg }] },
+    options: {
+      responsive: true,
+      scales: { y: { min: 0, max: 100, ticks: { callback: v => v + "%" } } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => {
+          const r = historyData[ctx.dataIndex];
+          let s = `${r.lifts_open}/${r.lifts_total} lifts (${ctx.parsed.y?.toFixed(0)}%)`;
+          if (r.holiday_name) s += " — " + r.holiday_name;
+          return s;
+        } } },
+      },
+    },
+  });
+}
 </script>
 </body>
 </html>
