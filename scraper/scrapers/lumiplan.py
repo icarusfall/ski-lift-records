@@ -10,6 +10,12 @@ These sites are SSR and share identical HTML structure:
 Mechanical lift type codes (everything else is pistes, terrain parks, nordic routes):
   FUNI, TC, TPH, TK, TS, TSD, TR, LIAISON
 
+Stale boards: out of season these pages keep serving the last live board
+with every lift still "O". The page header's "Updated <time>" is only the
+render time; the board's own date is a <p>Updated 19 April 2026</p> just
+inside div.lift-and-trail-statuses. A board older than STALE_AFTER_DAYS is
+reported as an error so bergfex takes over and nothing frozen is stored.
+
 Known working URLs:
   Val d'Isere  https://www.seevaldisere.com/lifts/status
   Tignes       https://www.seetignes.com/lifts/status
@@ -18,6 +24,8 @@ Known working URLs:
 """
 
 import re
+from datetime import date, datetime, timezone
+
 import requests
 from bs4 import BeautifulSoup
 from .base import LiftStatus, ResortSnapshot, normalise_status
@@ -32,6 +40,23 @@ HEADERS = {
 }
 
 LIFT_TYPES = {"FUNI", "TC", "TPH", "TK", "TS", "TSD", "TR", "LIAISON"}
+
+STALE_AFTER_DAYS = 2
+
+
+def _board_date(soup) -> date | None:
+    """The date the lift board itself was last updated, if the page says."""
+    panel = soup.find(class_="lift-and-trail-statuses")
+    if not panel:
+        return None
+    for p in panel.find_all("p", limit=5):
+        m = re.match(r"Updated\s+(\d{1,2}\s+\w+\s+\d{4})", p.get_text(strip=True))
+        if m:
+            try:
+                return datetime.strptime(m.group(1), "%d %B %Y").date()
+            except ValueError:
+                return None
+    return None
 
 
 def _type_code(datum) -> str:
@@ -51,6 +76,12 @@ def scrape(resort_id: str, url: str) -> ResortSnapshot:
         soup = BeautifulSoup(resp.text, "lxml")
     except Exception as e:
         snapshot.error = str(e)
+        return snapshot
+
+    board_date = _board_date(soup)
+    today = datetime.now(timezone.utc).date()
+    if board_date and (today - board_date).days > STALE_AFTER_DAYS:
+        snapshot.error = f"Stale lift board (updated {board_date.isoformat()})"
         return snapshot
 
     lifts: list[LiftStatus] = []
