@@ -222,6 +222,16 @@ def main():
 
     collect_all(resort_filter, slot=slot, catch_up=catch_up)
 
+    # Official avalanche danger, once a day after the midday lifts. About a
+    # dozen small files; like the climate top-up it can never take the lift
+    # collection down with it.
+    if resort_filter is None and slot == "midday" and not catch_up:
+        try:
+            from .avalanche import update_recent as update_avalanche
+            update_avalanche()
+        except Exception as e:
+            print(f"Avalanche update skipped: {e}")
+
     # The "when the snow arrives" view sets this autumn against the last 35,
     # which only works if the weather record keeps up through the season.
     # ERA5 lags real time by about five days, so once a week is plenty: the

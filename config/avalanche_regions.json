@@ -1,0 +1,225 @@
+{
+  "_about": "Each resort's EAWS avalanche warning micro-region, found by testing the resort's coordinates against regions.avalanches.org outlines (4 Nov 2026). 'file' is the per-region daily bulletin file; 'regions' lists the micro-region ids newest first, older ids kept because some regions were split and renamed.",
+  "resorts": {
+    "cervinia": {
+      "file": "IT-23",
+      "regions": [
+        "IT-23-AO-20"
+      ]
+    },
+    "zermatt": {
+      "file": "CH",
+      "regions": [
+        "CH-4222"
+      ]
+    },
+    "val-thorens": {
+      "file": "FR",
+      "regions": [
+        "FR-10"
+      ]
+    },
+    "les-menuires": {
+      "file": "FR",
+      "regions": [
+        "FR-10"
+      ]
+    },
+    "meribel": {
+      "file": "FR",
+      "regions": [
+        "FR-10"
+      ]
+    },
+    "courchevel": {
+      "file": "FR",
+      "regions": [
+        "FR-10"
+      ]
+    },
+    "saint-martin": {
+      "file": "FR",
+      "regions": [
+        "FR-10"
+      ]
+    },
+    "tignes": {
+      "file": "FR",
+      "regions": [
+        "FR-06"
+      ]
+    },
+    "val-disere": {
+      "file": "FR",
+      "regions": [
+        "FR-06"
+      ]
+    },
+    "les-arcs": {
+      "file": "FR",
+      "regions": [
+        "FR-06"
+      ]
+    },
+    "la-plagne": {
+      "file": "FR",
+      "regions": [
+        "FR-10"
+      ]
+    },
+    "alpe-dhuez": {
+      "file": "FR",
+      "regions": [
+        "FR-12"
+      ]
+    },
+    "les-deux-alpes": {
+      "file": "FR",
+      "regions": [
+        "FR-15"
+      ]
+    },
+    "chamonix": {
+      "file": "FR",
+      "regions": [
+        "FR-03"
+      ]
+    },
+    "verbier": {
+      "file": "CH",
+      "regions": [
+        "CH-4115"
+      ]
+    },
+    "saas-fee": {
+      "file": "CH",
+      "regions": [
+        "CH-4223"
+      ]
+    },
+    "andermatt": {
+      "file": "CH",
+      "regions": [
+        "CH-2223"
+      ]
+    },
+    "engelberg": {
+      "file": "CH",
+      "regions": [
+        "CH-2122"
+      ]
+    },
+    "st-anton": {
+      "file": "AT-07",
+      "regions": [
+        "AT-07-07"
+      ]
+    },
+    "lech-zuers": {
+      "file": "AT-08",
+      "regions": [
+        "AT-08-03-01",
+        "AT-08-03"
+      ]
+    },
+    "ischgl": {
+      "file": "AT-07",
+      "regions": [
+        "AT-07-13"
+      ]
+    },
+    "soelden": {
+      "file": "AT-07",
+      "regions": [
+        "AT-07-20"
+      ]
+    },
+    "hintertux": {
+      "file": "AT-07",
+      "regions": [
+        "AT-07-23-02",
+        "AT-07-23"
+      ]
+    },
+    "stubai": {
+      "file": "AT-07",
+      "regions": [
+        "AT-07-14-05",
+        "AT-07-14"
+      ]
+    },
+    "warth-schroecken": {
+      "file": "AT-08",
+      "regions": [
+        "AT-08-03-02",
+        "AT-08-03"
+      ]
+    },
+    "kaprun": {
+      "file": "AT-05",
+      "regions": [
+        "AT-05-10"
+      ]
+    },
+    "monterosa": {
+      "file": "IT-23",
+      "regions": [
+        "IT-23-AO-25"
+      ]
+    },
+    "la-thuile": {
+      "file": "IT-23",
+      "regions": [
+        "IT-23-AO-15"
+      ]
+    },
+    "courmayeur": {
+      "file": "IT-23",
+      "regions": [
+        "IT-23-AO-14"
+      ]
+    },
+    "livigno": {
+      "file": "IT-25",
+      "regions": [
+        "IT-25-SO-03"
+      ]
+    },
+    "passo-tonale": {
+      "file": "IT-32-TN",
+      "regions": [
+        "IT-32-TN-19"
+      ]
+    },
+    "st-moritz": {
+      "file": "CH",
+      "regions": [
+        "CH-7114"
+      ]
+    },
+    "obergurgl": {
+      "file": "AT-07",
+      "regions": [
+        "AT-07-21"
+      ]
+    },
+    "montgenevre": {
+      "file": "FR",
+      "regions": [
+        "FR-13"
+      ]
+    },
+    "grandvalira": {
+      "file": "AD",
+      "regions": [
+        "AD-01"
+      ]
+    },
+    "baqueira-beret": {
+      "file": "ES-CT-L",
+      "regions": [
+        "ES-CT-L-01"
+      ]
+    }
+  }
+}
