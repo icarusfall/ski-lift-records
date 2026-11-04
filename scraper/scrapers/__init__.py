@@ -62,13 +62,15 @@ def run_scraper(resort: dict) -> ResortSnapshot:
         bfx = bergfex.scrape(resort["id"], resort["bergfex_slug"])
         readings.append(_reading(bfx))
 
-    if primary.error and bfx is not None:
+    # Resorts where bergfex is known to be wrong set "bergfex_fallback": false,
+    # so a failed primary records a failed day rather than bergfex's numbers.
+    if primary.error and bfx is not None and resort.get("bergfex_fallback", True):
         # Fall back to the bergfex snapshot for the headline numbers
         bfx.source = f"bergfex.com (fallback from {scraper_type})"
         bfx.source_readings = readings
         return bfx
 
-    # Primary succeeded: enrich it with bergfex snow/conditions data
+    # Enrich the primary with bergfex snow/conditions data
     if bfx is not None:
         primary.snow_depth_mountain_cm = bfx.snow_depth_mountain_cm
         primary.snow_depth_valley_cm   = bfx.snow_depth_valley_cm

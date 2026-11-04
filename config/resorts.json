@@ -110,7 +110,9 @@
     "longitude": 6.98,
     "scraper": "lumiplan",
     "primary_url": "https://www.seevaldisere.com/lifts/status",
-    "bergfex_slug": "val-disere"
+    "bergfex_slug": "val-disere",
+    "bergfex_fallback": false,
+    "notes": "bergfex's lift count froze too (20/38 through Nov 2026), so it is recorded but never used as the headline"
   },
   {
     "id": "les-arcs",
