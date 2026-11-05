@@ -441,6 +441,30 @@ CREATE TABLE IF NOT EXISTS avalanche_daily (
     PRIMARY KEY (resort_id, date)
 );
 CREATE INDEX IF NOT EXISTS idx_avalanche_daily_date ON avalanche_daily (date);
+
+-- Hour-by-hour model weather at each resort's top altitude, from Open-Meteo's
+-- historical forecast archive. The snapshot columns keep only daily peaks;
+-- this keeps the timing, which is what separates a morning wind hold from a
+-- day-long closure. Modelled, not measured: a grid cell, not an anemometer.
+-- time is UTC.
+CREATE TABLE IF NOT EXISTS weather_hourly (
+    resort_id           VARCHAR(50) NOT NULL REFERENCES resorts(id),
+    time                TIMESTAMP NOT NULL,
+    wind_gust_kmh       NUMERIC(5,1),
+    wind_speed_kmh      NUMERIC(5,1),
+    wind_dir_deg        SMALLINT,
+    wind_700hpa_kmh     NUMERIC(5,1),
+    wind_700hpa_dir_deg SMALLINT,
+    temp_c              NUMERIC(4,1),
+    snowfall_cm         NUMERIC(5,2),
+    precipitation_mm    NUMERIC(5,1),
+    cloud_cover_pct     SMALLINT,
+    cloud_cover_low_pct SMALLINT,
+    visibility_m        INTEGER,
+    freezing_level_m    INTEGER,
+    weather_code        SMALLINT,
+    PRIMARY KEY (resort_id, time)
+);
 """
 
 

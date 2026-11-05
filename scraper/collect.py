@@ -231,6 +231,12 @@ def main():
             update_avalanche()
         except Exception as e:
             print(f"Avalanche update skipped: {e}")
+        # Hour-by-hour weather for the last few days, 36 small requests.
+        try:
+            from .hourly import update_recent as update_hourly
+            update_hourly()
+        except Exception as e:
+            print(f"Hourly weather update skipped: {e}")
 
     # The "when the snow arrives" view sets this autumn against the last 35,
     # which only works if the weather record keeps up through the season.
