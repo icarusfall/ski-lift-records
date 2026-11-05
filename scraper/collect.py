@@ -222,6 +222,15 @@ def main():
 
     collect_all(resort_filter, slot=slot, catch_up=catch_up)
 
+    # Measured station weather on both full runs: SLF's live feed keeps only
+    # 24 hours, so two looks a day leave slack for one failing.
+    if resort_filter is None and not catch_up:
+        try:
+            from .stations import update_recent as update_stations
+            update_stations()
+        except Exception as e:
+            print(f"Station weather update skipped: {e}")
+
     # Official avalanche danger, once a day after the midday lifts. About a
     # dozen small files; like the climate top-up it can never take the lift
     # collection down with it.

@@ -465,6 +465,41 @@ CREATE TABLE IF NOT EXISTS weather_hourly (
     weather_code        SMALLINT,
     PRIMARY KEY (resort_id, time)
 );
+
+-- Measured weather from official stations near the lifts (config/stations.json).
+-- The modelled wind above is a grid cell; these are real anemometers, kept to
+-- test whether the crosswind null was the instrument's fault.
+CREATE TABLE IF NOT EXISTS stations (
+    id           VARCHAR(40) PRIMARY KEY,     -- e.g. meteoswiss-GOR, slf-ZER1
+    source       VARCHAR(20) NOT NULL,
+    code         VARCHAR(20) NOT NULL,
+    name         TEXT NOT NULL,
+    latitude     NUMERIC(8,5),
+    longitude    NUMERIC(8,5),
+    elevation_m  INTEGER,
+    resort_ids   TEXT,                         -- comma-separated resorts it serves
+    note         TEXT
+);
+
+-- One row per station-hour. time is UTC and marks the END of the hour, the
+-- same convention as weather_hourly (Open-Meteo gusts are "max of the
+-- preceding hour"). Half-hourly SLF readings are rolled up into the hour
+-- they end in; n_samples says how many went in.
+CREATE TABLE IF NOT EXISTS station_hourly (
+    station_id     VARCHAR(40) NOT NULL REFERENCES stations(id),
+    time           TIMESTAMP NOT NULL,
+    temp_c         NUMERIC(4,1),
+    rh_pct         SMALLINT,
+    wind_speed_kmh NUMERIC(5,1),
+    wind_gust_kmh  NUMERIC(5,1),
+    wind_dir_deg   SMALLINT,
+    precip_mm      NUMERIC(5,1),
+    sunshine_min   SMALLINT,
+    pressure_hpa   NUMERIC(5,1),
+    snow_depth_cm  SMALLINT,
+    n_samples      SMALLINT,
+    PRIMARY KEY (station_id, time)
+);
 """
 
 
