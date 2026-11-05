@@ -420,6 +420,27 @@ CREATE TABLE IF NOT EXISTS dem_patches (
     far_grid    BYTEA NOT NULL,
     built_at    TIMESTAMP DEFAULT NOW()
 );
+
+-- The official avalanche danger for each resort's warning region, one row per
+-- resort per day, from the EAWS bulletin archive (every Alpine country plus
+-- Andorra and Aran, back to winter 2021/22). Danger is the European 1-5 scale.
+-- Where a bulletin splits by elevation, danger_low is below elevation_split
+-- and danger_high above it; danger_max is the worst rating that day.
+CREATE TABLE IF NOT EXISTS avalanche_daily (
+    resort_id       VARCHAR(50) NOT NULL REFERENCES resorts(id),
+    date            DATE NOT NULL,
+    region_id       VARCHAR(30) NOT NULL,
+    danger_max      SMALLINT,
+    danger_low      SMALLINT,
+    danger_high     SMALLINT,
+    elevation_split VARCHAR(20),
+    problems        TEXT,
+    bulletin_id     TEXT,
+    published_at    TIMESTAMPTZ,
+    fetched_at      TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (resort_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_avalanche_daily_date ON avalanche_daily (date);
 """
 
 
