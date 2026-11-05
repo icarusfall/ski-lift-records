@@ -44,6 +44,7 @@ FIELDS = [
 # request is split into month-sized pieces so no single call is heavy.
 REQUEST_PAUSE_S = 3.0
 CHUNK_DAYS = 31
+RETRY_PAUSE_S = 30.0
 
 
 def _fetch(resort: dict, start: date, end: date) -> list[dict]:
@@ -110,14 +111,20 @@ def backfill(start: date, end: date, resort_filter: str | None = None):
         chunk = lo
         while chunk <= hi:
             chunk_end = min(chunk + timedelta(days=CHUNK_DAYS - 1), hi)
-            try:
-                rows = _fetch(resort, chunk, chunk_end)
-            except RuntimeError as e:
-                print(f"  Stopping: {e}. Re-run later; finished days are skipped.")
-                return
-            except Exception as e:
-                print(f"  [{resort['id']}] {chunk}..{chunk_end}: {e}")
-                rows = []
+            rows = []
+            # Open-Meteo drops roughly one connection in ten; one unhurried
+            # retry clears nearly all of them.
+            for attempt in (1, 2):
+                try:
+                    rows = _fetch(resort, chunk, chunk_end)
+                    break
+                except RuntimeError as e:
+                    print(f"  Stopping: {e}. Re-run later; finished days are skipped.")
+                    return
+                except Exception as e:
+                    print(f"  [{resort['id']}] {chunk}..{chunk_end}: {e}")
+                    if attempt == 1:
+                        time.sleep(RETRY_PAUSE_S)
             _store(rows)
             written += len(rows)
             chunk = chunk_end + timedelta(days=1)
