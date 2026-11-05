@@ -1,313 +1,456 @@
-"""Measured weather from official stations near the lifts.
+"""Measured snow depth from Alpine weather stations, to check ERA5 against.
 
-The modelled hourly wind (scraper/hourly.py) is a grid cell. These are real
-anemometers: MeteoSwiss SwissMetNet (hourly CSVs on data.geo.admin.ch) and
-SLF IMIS (half-hourly; a live API for the last 24 hours, plus one CSV per
-station with the full history, refreshed weekly). Both are free, keyless and
-CC BY. Stations are listed in config/stations.json.
+ERA5 gives a modelled snowpack on a 25 km grid, which saturates over glaciers
+and cannot know a valley. This ingests the real thing: the Matiu et al. dataset
+of in-situ station observations across the Alps, 1971-2019, from Zenodo record
+4572636 (CC BY 4.0).
 
-    python -m scraper.stations --update      # recent hours (the collector runs this)
-    python -m scraper.stations --backfill    # full history, every station
-    python -m scraper.stations --backfill slf-ZER1
+    python -m scraper.stations --download    # fetch archives once, then cache
+    python -m scraper.stations --load        # parse into the database
+    python -m scraper.stations --match       # rank stations per resort
     python -m scraper.stations --status
+    python -m scraper.stations --compare     # ERA5's model vs the measurements
 
-Every row is the hour ENDING at `time` (UTC), matching weather_hourly.
+This is a **bulk download of a published archive, not a scrape**. Roughly a
+dozen files, fetched once and kept; a second run re-fetches nothing. Zenodo is
+a free public service, so requests are paced and identified, and the two
+gigabytes of paper-reproduction material in the record are left alone.
+
+Cite as: Matiu et al. (2021), doi:10.5281/zenodo.4572636. The dataset's own
+LICENSE file also carries per-provider terms and is downloaded alongside.
+
+## What is actually available
+
+Daily depth exists only for France and Italy. Austria and Switzerland appear
+as **monthly means only** — their providers evidently did not licence daily
+redistribution — which covers 14 of the 36 resorts. Monthly still answers
+"how has February changed since 1971"; it cannot answer an arbitrary
+14-22 February window. Germany is skipped: no German resorts in the roster.
 """
 import csv
 import io
-import json
 import math
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+import zipfile
 from pathlib import Path
 
-import psycopg2.extras
 import requests
+from psycopg2.extras import execute_values
 
+from .collect import load_resorts
 from .db import cursor
 
-STATIONS_FILE = Path(__file__).parent.parent / "config" / "stations.json"
-HEADERS = {"User-Agent": "ski-lift-records/1.0 (hobby research project)"}
-REQUEST_PAUSE_S = 2.0
+RECORD = "4572636"
+API = f"https://zenodo.org/api/records/{RECORD}"
+CACHE = Path(__file__).parent.parent / "data" / "stations"
+UA = ("ski-lift-records/1.0 (hobby research project; "
+      "github.com/icarusfall/ski-lift-records)")
+# Be a good citizen of a free archive: a pause between files, and a long
+# timeout rather than a retry storm if the server is thinking.
+PAUSE_S = 3.0
+TIMEOUT_S = 180
 
-MS_BASE = "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/{c}/ogd-smn_{c}_h_{part}.csv"
-MS_DECADES = ["historical_1990-1999", "historical_2000-2009",
-              "historical_2010-2019", "historical_2020-2029"]
-# MeteoSwiss column -> our column. Wind already in km/h.
-MS_COLUMNS = {
-    "tre200h0": "temp_c",
-    "ure200h0": "rh_pct",
-    "fu3010h0": "wind_speed_kmh",
-    "fu3010h1": "wind_gust_kmh",
-    "dkl010h0": "wind_dir_deg",
-    "rre150h0": "precip_mm",
-    "sre000h0": "sunshine_min",
-    "prestah0": "pressure_hpa",
-    "htoauths": "snow_depth_cm",
-}
+# Matching gates. Distance is not enough on its own — this is an Alpine
+# dataset, so the two Pyrenean resorts must end up with nothing rather than
+# with a station 300 km away.
+MAX_KM = 15.0
+MIN_YEARS = 20
+# A record ending in 1982 is not useless: a resort often has an old station
+# that closed and a newer one that opened, and together they reach further back
+# than either alone. So this only decides which station is *primary*; the
+# others are kept and offered as their own series. They are never spliced into
+# one line — two stations at different elevations would fake a step change.
+MUST_REACH_YEAR = 2010
+DAILY_BONUS = 5.0          # in score-km: prefer daily over monthly
+CURRENT_BONUS = 8.0        # prefer a station still reporting, for the primary
+MAX_CANDIDATES = 4
+# Every station sits far below its resort's summit — they measure valley and
+# mid-mountain snowpack, which is what exists. Only an extreme gap is worth
+# flagging, or the flag fires on everything and stops being read.
+REVIEW_ELEV_M = 2000       # station this far below the summit wants a human
+REVIEW_KM = 8.0
+BATCH = 5000
 
-SLF_HISTORY = "https://measurement-data.slf.ch/imis/data/by_station/{c}.csv"
-SLF_LIVE = "https://measurement-api.slf.ch/public/api/imis/station/{c}/measurements"
-
-COLUMNS = ["temp_c", "rh_pct", "wind_speed_kmh", "wind_gust_kmh", "wind_dir_deg",
-           "precip_mm", "sunshine_min", "pressure_hpa", "snow_depth_cm", "n_samples"]
-INTEGER_COLUMNS = {"rh_pct", "wind_dir_deg", "sunshine_min", "snow_depth_cm"}
-
-
-def load_stations() -> list[dict]:
-    return json.loads(STATIONS_FILE.read_text(encoding="utf-8"))["stations"]
-
-
-def _get(url: str, **kw) -> requests.Response:
-    resp = requests.get(url, headers=HEADERS, timeout=kw.pop("timeout", 120), **kw)
-    time.sleep(REQUEST_PAUSE_S)
-    return resp
-
-
-def _num(v):
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except ValueError:
-        return None
+# Only what the roster can use. The aux_paper_* archives are 2 GB of material
+# for reproducing the paper's figures and are deliberately never requested.
+WANTED = [
+    "meta_all.csv",
+    "meta_00_column_names_content.txt",
+    "data_daily_00_column_names_content.txt",
+    "data_monthly_00_column_names_content.txt",
+    "00_DATA_LICENSE_AND_TERMS.pdf",
+    # Daily — France and Italy.
+    "data_daily_FR_METEOFRANCE.zip",
+    "data_daily_IT_VDA_CF.zip",      # Valle d'Aosta: Cervinia, La Thuile, Courmayeur
+    "data_daily_IT_LOMBARDIA.zip",   # Livigno
+    "data_daily_IT_TN.zip",          # Trentino: Passo Tonale
+    "data_daily_IT_BZ.zip",          # South Tyrol, adjacent to Passo Tonale
+    # Monthly only — Austria and Switzerland.
+    "data_monthly_AT_HZB.zip",
+    "data_monthly_CH_SLF.zip",
+    "data_monthly_CH_METEOSWISS.zip",
+]
 
 
-# ---------------------------------------------------------------- MeteoSwiss
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = UA
+    return s
 
-def _meteoswiss_rows(station: dict, part: str, since: datetime | None = None) -> list[dict]:
-    resp = _get(MS_BASE.format(c=station["code"].lower(), part=part))
-    if resp.status_code == 404:
-        return []
-    resp.raise_for_status()
-    # The files are latin-1 and semicolon-separated.
-    reader = csv.DictReader(io.StringIO(resp.content.decode("latin-1")), delimiter=";")
-    rows = []
-    for r in reader:
-        t = datetime.strptime(r["reference_timestamp"], "%d.%m.%Y %H:%M")
-        if since and t <= since:
+
+def download(force: bool = False) -> int:
+    """Fetch the wanted files once. Anything already cached is left alone."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    s = _session()
+    print(f"\n  Zenodo record {RECORD} -> {CACHE}\n")
+    meta = s.get(API, timeout=TIMEOUT_S)
+    meta.raise_for_status()
+    files = {f["key"]: f for f in meta.json()["files"]}
+
+    fetched = skipped = 0
+    for name in WANTED:
+        f = files.get(name)
+        if not f:
+            print(f"  {name:<44} MISSING from the record")
             continue
-        row = {"station_id": station["id"], "time": t, "n_samples": 1}
-        for src, col in MS_COLUMNS.items():
-            v = _num(r.get(src))
-            row[col] = round(v) if v is not None and col in INTEGER_COLUMNS else v
-        if row["wind_dir_deg"] is not None:
-            row["wind_dir_deg"] %= 360
-        rows.append(row)
-    return rows
-
-
-# ---------------------------------------------------------------------- SLF
-
-def _hour_ending(t: datetime) -> datetime:
-    """A reading at 08:30 or 09:00 belongs to the hour ending 09:00."""
-    floor = t.replace(minute=0, second=0, microsecond=0)
-    return floor if t == floor else floor + timedelta(hours=1)
-
-
-def _slf_hourly(station: dict, samples, since: datetime | None = None) -> list[dict]:
-    """Roll half-hourly IMIS samples (dicts with SLF field names) into hours."""
-    hours: dict[datetime, list[dict]] = {}
-    for s in samples:
-        raw = s["measure_date"].replace("Z", "+00:00")
-        t = datetime.fromisoformat(raw).astimezone(timezone.utc).replace(tzinfo=None)
-        h = _hour_ending(t)
-        if since and h <= since:
+        dest = CACHE / name
+        if dest.exists() and not force:
+            print(f"  {name:<44} cached")
+            skipped += 1
             continue
-        hours.setdefault(h, []).append(s)
+        url = f["links"]["self"]
+        mb = f["size"] / 1e6
+        print(f"  {name:<44} {mb:>7.1f} MB …", end="", flush=True)
+        r = s.get(url, timeout=TIMEOUT_S)
+        r.raise_for_status()
+        dest.write_bytes(r.content)
+        print(" done")
+        fetched += 1
+        time.sleep(PAUSE_S)
 
-    rows = []
-    for h, group in sorted(hours.items()):
-        def vals(field):
-            return [v for v in (_num(g.get(field)) for g in group) if v is not None]
-        temp, rh = vals("TA_30MIN_MEAN"), vals("RH_30MIN_MEAN")
-        speed, gust = vals("VW_30MIN_MEAN"), vals("VW_30MIN_MAX")
-        # Direction: speed-weighted vector mean, so a calm half hour does not
-        # drag the bearing about.
-        x = y = 0.0
-        for g in group:
-            d, v = _num(g.get("DW_30MIN_MEAN")), _num(g.get("VW_30MIN_MEAN"))
-            if d is not None and v:
-                x += v * math.sin(math.radians(d))
-                y += v * math.cos(math.radians(d))
-        direction = round(math.degrees(math.atan2(x, y))) % 360 if (x or y) else None
-        rows.append({
-            "station_id": station["id"], "time": h,
-            "temp_c": round(sum(temp) / len(temp), 1) if temp else None,
-            "rh_pct": round(sum(rh) / len(rh)) if rh else None,
-            # m/s -> km/h
-            "wind_speed_kmh": round(sum(speed) / len(speed) * 3.6, 1) if speed else None,
-            "wind_gust_kmh": round(max(gust) * 3.6, 1) if gust else None,
-            "wind_dir_deg": direction,
-            "precip_mm": None, "sunshine_min": None, "pressure_hpa": None,
-            "snow_depth_cm": (round(vals("HS")[-1]) if vals("HS") else None),
-            "n_samples": len(group),
-        })
-    return rows
+    print(f"\n  {fetched} downloaded, {skipped} already cached.")
+    if fetched:
+        print("  Matiu et al. (2021), doi:10.5281/zenodo.4572636, CC BY 4.0.")
+    print()
+    return 0
 
 
-def _slf_history(station: dict) -> list[dict]:
-    """The full-history CSV (tens of MB), streamed rather than held whole."""
-    resp = requests.get(SLF_HISTORY.format(c=station["code"]), headers=HEADERS,
-                        timeout=300, stream=True)
-    resp.raise_for_status()
-    lines = (l.decode("utf-8") for l in resp.iter_lines() if l)
-    rows = _slf_hourly(station, csv.DictReader(lines))
-    time.sleep(REQUEST_PAUSE_S)
-    return rows
+def archives(kind: str) -> list[Path]:
+    """Cached zips of a given kind ('daily' or 'monthly')."""
+    return sorted(CACHE.glob(f"data_{kind}_*.zip"))
 
 
-def _slf_live(station: dict, since: datetime | None = None) -> list[dict]:
-    resp = _get(SLF_LIVE.format(c=station["code"]), timeout=30)
-    resp.raise_for_status()
-    rows = _slf_hourly(station, resp.json(), since)
-    # The first hour of a 24-hour window may hold only its second half.
-    return [r for r in rows if r["n_samples"] >= 2] if rows else rows
+def peek(name: str, n: int = 5) -> None:
+    """Print the first few lines of every member of a cached archive."""
+    path = CACHE / name
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        print(f"\n  {name}: {len(names)} member(s)")
+        for member in names[:3]:
+            with z.open(member) as fh:
+                head = io.TextIOWrapper(fh, encoding="utf-8", errors="replace")
+                print(f"\n  --- {member} ---")
+                for i, line in enumerate(head):
+                    if i >= n:
+                        break
+                    print("   ", line.rstrip()[:160])
 
 
-# -------------------------------------------------------------------- store
+def _providers() -> dict[str, str]:
+    """Provider -> cadence, from the archives actually cached.
 
-def _register(stations: list[dict]):
+    Four providers appear in meta_all.csv but publish no data at all
+    (IT_VDA_AIBM, IT_SMI, IT_PIEMONTE, IT_TN_TUM) — they were used in the
+    paper's consistency analysis but not redistributed. Deriving cadence from
+    the files on disk means those stations are never matched to a resort and
+    then found to be empty. That trap cost a first pass: Cervinia's nearest
+    station, 100 m away, is one of them.
+    """
+    out = {}
+    for kind in ("monthly", "daily"):       # daily wins where both exist
+        for p in archives(kind):
+            out[p.stem.replace(f"data_{kind}_", "")] = kind
+    return out
+
+
+def read_meta() -> list[dict]:
+    """Stations with a snow-depth record and an archive we actually hold."""
+    cadence = _providers()
+    out = []
+    with open(CACHE / "meta_all.csv", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            if not r["HS_year_start"] or r["Provider"] not in cadence:
+                continue
+            out.append({
+                "id": r["Name"], "provider": r["Provider"],
+                "country": r["Provider"][:2],
+                "lat": float(r["Latitude"]), "lon": float(r["Longitude"]),
+                "elev": int(float(r["Elevation"])),
+                "y0": int(r["HS_year_start"]), "y1": int(r["HS_year_end"]),
+                "cadence": cadence[r["Provider"]],
+            })
+    return out
+
+
+def _km(lat1, lon1, lat2, lon2) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def rank_candidates(resort: dict, meta: list[dict]) -> list[dict]:
+    """Stations that could stand for this resort, best first.
+
+    The gates matter more than the score. A record that stops in 1982 is
+    useless for a climate trend however close the station is, and a station in
+    the Pyrenees cannot stand in for anything — this is an Alpine dataset, so
+    Grandvalira and Baqueira-Beret have no candidate at all and should not be
+    given a bad one.
+    """
+    out = []
+    for s in meta:
+        d = _km(resort["latitude"], resort["longitude"], s["lat"], s["lon"])
+        if d > MAX_KM or (s["y1"] - s["y0"] + 1) < MIN_YEARS:
+            continue
+        gap = s["elev"] - resort["top_altitude_m"]
+        score = (d + abs(gap) / 200
+                 - (DAILY_BONUS if s["cadence"] == "daily" else 0)
+                 - (CURRENT_BONUS if s["y1"] >= MUST_REACH_YEAR else 0))
+        out.append({**s, "distance_km": round(d, 2), "elev_diff_m": gap,
+                    "current": s["y1"] >= MUST_REACH_YEAR, "score": score})
+    return sorted(out, key=lambda c: c["score"])
+
+
+def match(verbose: bool = True) -> dict:
+    resorts = [r for r in load_resorts() if r.get("latitude")]
+    meta = read_meta()
+    by_id = {s["id"]: s for s in meta}
+    picks, unmatched = {}, []
+    for r in resorts:
+        cands = rank_candidates(r, meta)[:MAX_CANDIDATES]
+        if not cands:
+            unmatched.append(r["id"])
+            continue
+        picks[r["id"]] = cands
+
+    used = {c["id"] for cs in picks.values() for c in cs}
     with cursor() as cur:
-        for s in stations:
+        for sid in used:
+            s = by_id[sid]
             cur.execute("""
-                INSERT INTO stations (id, source, code, name, latitude, longitude,
-                                      elevation_m, resort_ids, note)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO snow_stations
+                    (id, provider, country, latitude, longitude, elevation_m,
+                     hs_year_start, hs_year_end, cadence)
+                VALUES (%(id)s, %(provider)s, %(country)s, %(lat)s, %(lon)s,
+                        %(elev)s, %(y0)s, %(y1)s, %(cadence)s)
                 ON CONFLICT (id) DO UPDATE SET
-                    source = EXCLUDED.source, code = EXCLUDED.code, name = EXCLUDED.name,
-                    latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
-                    elevation_m = EXCLUDED.elevation_m, resort_ids = EXCLUDED.resort_ids,
-                    note = EXCLUDED.note
-            """, (s["id"], s["source"], s["code"], s["name"], s["latitude"],
-                  s["longitude"], s["elevation_m"], ",".join(s["resort_ids"]), s.get("note")))
+                    hs_year_start = EXCLUDED.hs_year_start,
+                    hs_year_end   = EXCLUDED.hs_year_end,
+                    cadence       = EXCLUDED.cadence
+            """, s)
+        cur.execute("DELETE FROM resort_stations")
+        for rid, cands in picks.items():
+            for i, c in enumerate(cands, 1):
+                cur.execute("""
+                    INSERT INTO resort_stations
+                        (resort_id, station_id, rank, distance_km, elev_diff_m, chosen)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (rid, c["id"], i, c["distance_km"], c["elev_diff_m"], i == 1))
+
+    if verbose:
+        print(f"\nStation matches — within {MAX_KM} km, 20+ years, reaching "
+              f"{MUST_REACH_YEAR} or later\n")
+        print(f"  {'resort':<17}{'station':<32}{'km':>6}{'Δelev':>8}{'record':>12}  kind")
+        for rid in sorted(picks):
+            c = picks[rid][0]
+            flag = "  ← review" if abs(c["elev_diff_m"]) > REVIEW_ELEV_M or c["distance_km"] > REVIEW_KM else ""
+            print(f"  {rid:<17}{c['id'][:30]:<32}{c['distance_km']:>5.1f}"
+                  f"{c['elev_diff_m']:>+8}{c['y0']:>7}-{c['y1']}  {c['cadence']}{flag}")
+        for rid in unmatched:
+            print(f"  {rid:<17}— no station qualifies")
+        # What the older, closed stations buy: how much further back the resort
+        # can be seen once they are kept as separate series.
+        gained = [(rid, min(c["y0"] for c in cs), cs[0]["y0"])
+                  for rid, cs in picks.items()]
+        gained = [g for g in gained if g[1] < g[2]]
+        if gained:
+            print(f"\n  Secondary stations extend {len(gained)} resort(s) further back:")
+            for rid, earliest, primary in sorted(gained, key=lambda g: g[1] - g[2])[:8]:
+                print(f"    {rid:<17}{primary} → {earliest}  "
+                      f"({primary - earliest} extra years)")
+        print(f"\n  {len(picks)} matched, {len(unmatched)} without a candidate, "
+              f"{len(used)} stations to load.")
+        print("  Δelev is station minus resort summit. It is large and negative "
+              "everywhere, because\n  snow is measured on flat undisturbed ground "
+              "in valleys, not on a summit and\n  never on a piste — that is the "
+              "nature of the measurement, not a fault in the\n  match. Rows marked "
+              "review are unusually far or unusually low even by that\n  standard.\n")
+    return picks
 
 
-def _store(rows: list[dict]) -> int:
-    if not rows:
-        return 0
-    cols = ["station_id", "time"] + COLUMNS
-    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNS)
+def _rows_for(stations: set[str]):
+    """Yield (station, date, hs, hs_filled, hn) for the wanted stations only.
+
+    Streams each archive rather than reading it whole: the daily files hold
+    4.7 million rows between them and we want perhaps thirty stations.
+    """
+    for path in archives("daily"):
+        with zipfile.ZipFile(path) as z:
+            with z.open(z.namelist()[0]) as fh:
+                for r in csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8",
+                                                         errors="replace")):
+                    if r["Name"] not in stations:
+                        continue
+                    yield (r["Name"], r["Date"], r["HS_after_qc"] or None,
+                           r["HS_after_gapfill"] or None, r["HN_after_qc"] or None)
+    for path in archives("monthly"):
+        with zipfile.ZipFile(path) as z:
+            with z.open(z.namelist()[0]) as fh:
+                for r in csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8",
+                                                         errors="replace")):
+                    if r["Name"] not in stations:
+                        continue
+                    yield (r["Name"], f"{int(r['year']):04d}-{int(r['month']):02d}-01",
+                           r["HS"] or None, r["HS_gapfill"] or None, r["HN"] or None)
+
+
+def load() -> int:
     with cursor() as cur:
-        psycopg2.extras.execute_values(cur, f"""
-            INSERT INTO station_hourly ({", ".join(cols)}) VALUES %s
-            ON CONFLICT (station_id, time) DO UPDATE SET {updates}
-        """, [tuple(r[c] for c in cols) for r in rows], page_size=5000)
-    return len(rows)
+        # Every candidate, not only the primary: an older station that closed
+        # is exactly what extends a resort's record backwards, and it is drawn
+        # as its own series rather than joined onto the newer one.
+        cur.execute("SELECT DISTINCT station_id FROM resort_stations")
+        wanted = {r["station_id"] for r in cur.fetchall()}
+    if not wanted:
+        print("\n  No matches yet — run --match first.\n")
+        return 1
+    print(f"\n  Loading {len(wanted)} station(s) from the cached archives…")
 
-
-def _latest(station_id: str) -> datetime | None:
+    batch, total, empty = [], 0, 0
     with cursor() as cur:
-        cur.execute("SELECT MAX(time) AS t FROM station_hourly WHERE station_id = %s",
-                    (station_id,))
-        return cur.fetchone()["t"]
+        for row in _rows_for(wanted):
+            if row[2] is None and row[3] is None and row[4] is None:
+                empty += 1
+                continue
+            batch.append(row)
+            if len(batch) >= BATCH:
+                execute_values(cur, """
+                    INSERT INTO station_snow (station_id, date, hs_cm, hs_filled_cm, hn_cm)
+                    VALUES %s ON CONFLICT (station_id, date) DO UPDATE SET
+                        hs_cm = EXCLUDED.hs_cm,
+                        hs_filled_cm = EXCLUDED.hs_filled_cm,
+                        hn_cm = EXCLUDED.hn_cm
+                """, batch)
+                total += len(batch)
+                print(f"    {total:,} rows…", end="\r", flush=True)
+                batch = []
+        if batch:
+            execute_values(cur, """
+                INSERT INTO station_snow (station_id, date, hs_cm, hs_filled_cm, hn_cm)
+                VALUES %s ON CONFLICT (station_id, date) DO UPDATE SET
+                    hs_cm = EXCLUDED.hs_cm,
+                    hs_filled_cm = EXCLUDED.hs_filled_cm,
+                    hn_cm = EXCLUDED.hn_cm
+            """, batch)
+            total += len(batch)
+    print(f"    {total:,} rows loaded; {empty:,} all-null rows skipped.\n")
+    return 0
 
 
-# ------------------------------------------------------------------ actions
-
-def backfill(station_filter: str | None = None):
-    stations = [s for s in load_stations()
-                if station_filter is None or s["id"] == station_filter]
-    _register(stations)
-    for s in stations:
-        total = 0
-        if s["source"] == "meteoswiss":
-            for part in MS_DECADES + ["recent", "now"]:
-                n = _store(_meteoswiss_rows(s, part))
-                print(f"  [{s['id']}] {part}: {n} hours")
-                total += n
-        elif s["source"] == "slf":
-            total += _store(_slf_history(s))
-            total += _store(_slf_live(s))
-        print(f"  [{s['id']}] {total} hours written")
-
-
-def _first_gap(station_id: str, days: int = 21) -> datetime | None:
-    """The last stored hour before the earliest hole in the past few weeks."""
+def status() -> int:
     with cursor() as cur:
         cur.execute("""
-            SELECT prev FROM (
-                SELECT time, LAG(time) OVER (ORDER BY time) AS prev
-                FROM station_hourly
-                WHERE station_id = %s AND time > NOW() - make_interval(days => %s)
-            ) x WHERE time - prev > INTERVAL '1 hour' ORDER BY prev LIMIT 1
-        """, (station_id, days))
-        row = cur.fetchone()
-    return row["prev"] if row else None
+            SELECT rs.resort_id, rs.station_id, s.cadence, s.elevation_m,
+                   rs.distance_km, rs.elev_diff_m,
+                   COUNT(ss.date) AS n,
+                   MIN(ss.date) AS first, MAX(ss.date) AS last
+            FROM resort_stations rs
+            JOIN snow_stations s ON s.id = rs.station_id
+            LEFT JOIN station_snow ss ON ss.station_id = rs.station_id
+            WHERE rs.chosen
+            GROUP BY rs.resort_id, rs.station_id, s.cadence, s.elevation_m,
+                     rs.distance_km, rs.elev_diff_m
+            ORDER BY rs.resort_id
+        """)
+        rows = cur.fetchall()
+    print(f"\n  {'resort':<17}{'station':<30}{'kind':<9}{'rows':>8}  span")
+    for r in rows:
+        span = f"{r['first']} → {r['last']}" if r["n"] else "— nothing loaded"
+        print(f"  {r['resort_id']:<17}{r['station_id'][:28]:<30}{r['cadence']:<9}"
+              f"{r['n']:>8,}  {span}")
+    print(f"\n  {len(rows)} resorts with a chosen station.\n")
+    return 0
 
 
-def _slf_refill(s: dict):
-    """SLF's live API keeps 24 hours, so a missed day leaves a hole that only
-    the full-history file can fill. That file is refreshed about weekly; pull
-    it (tens of MB) only when it is newer than the hole, so at most once a
-    week and never while the hole is still beyond its end."""
-    gap = _first_gap(s["id"])
-    if not gap:
-        return
-    head = requests.head(SLF_HISTORY.format(c=s["code"]), headers=HEADERS, timeout=30)
-    modified = head.headers.get("Last-Modified")
-    if not modified:
-        return
-    file_time = datetime.strptime(modified, "%a, %d %b %Y %H:%M:%S GMT")
-    if file_time <= gap + timedelta(hours=6):
-        print(f"  [{s['id']}] hole after {gap:%Y-%m-%d %H:%M}; "
-              f"history file ({file_time:%Y-%m-%d}) does not reach it yet")
-        return
-    n = _store(_slf_history(s))
-    print(f"  [{s['id']}] refilled from history file ({file_time:%Y-%m-%d}): {n} hours")
+def compare() -> int:
+    """ERA5's modelled snowpack against the measured one, where both exist.
 
-
-def update_recent():
-    """New hours since the last stored one. MeteoSwiss 'recent' runs from 1
-    January to yesterday and 'now' covers today, so together they close any
-    gap this year. SLF's live API holds only 24 hours; holes it leaves are
-    filled from the weekly history file once that catches up."""
-    stations = load_stations()
-    _register(stations)
-    for s in stations:
-        try:
-            latest = _latest(s["id"])
-            # Step back two hours so a part-filled last hour is redone whole.
-            since = latest - timedelta(hours=2) if latest else None
-            if s["source"] == "meteoswiss":
-                n = sum(_store(_meteoswiss_rows(s, p, since)) for p in ("recent", "now"))
-            else:
-                n = _store(_slf_live(s, since))
-                _slf_refill(s)
-            print(f"Station {s['id']}: {n} new hours.")
-        except Exception as e:
-            print(f"Station {s['id']} skipped: {e}")
-
-
-def status():
+    The point of the ingest. ERA5 is downscaled to each resort's summit and the
+    stations sit a kilometre or more below, so the two are not measuring the
+    same snow and the absolute numbers should differ. What matters is whether
+    they move together: a strong correlation means the modelled series is a
+    usable stand-in for year-to-year variation even where its level is wrong.
+    """
     with cursor() as cur:
         cur.execute("""
-            SELECT station_id, MIN(time) AS first, MAX(time) AS last, COUNT(*) AS hours,
-                   COUNT(wind_gust_kmh) AS gust_hours
-            FROM station_hourly GROUP BY 1 ORDER BY 1
+            SELECT rs.resort_id, rs.station_id, s.elevation_m, rs.elev_diff_m,
+                   COUNT(*) AS n,
+                   CORR(cd.snow_depth_model_m * 100, ss.hs_cm) AS r,
+                   AVG(cd.snow_depth_model_m * 100) AS model_cm,
+                   AVG(ss.hs_cm) AS measured_cm
+            FROM resort_stations rs
+            JOIN snow_stations s  ON s.id = rs.station_id
+            JOIN station_snow ss  ON ss.station_id = rs.station_id
+            JOIN climate_daily cd ON cd.resort_id = rs.resort_id AND cd.date = ss.date
+            WHERE rs.chosen AND s.cadence = 'daily' AND ss.hs_cm IS NOT NULL
+              AND EXTRACT(MONTH FROM ss.date) IN (12, 1, 2, 3)
+            GROUP BY rs.resort_id, rs.station_id, s.elevation_m, rs.elev_diff_m
+            HAVING COUNT(*) > 500
+            ORDER BY CORR(cd.snow_depth_model_m * 100, ss.hs_cm) DESC NULLS LAST
         """)
         rows = cur.fetchall()
     if not rows:
-        print("No station data yet.")
+        print("\n  Nothing to compare — run --match and --load first.\n")
+        return 1
+    print("\nERA5 modelled snow depth vs measured, December to March\n")
+    print(f"  {'resort':<17}{'days':>7}{'corr':>7}{'model':>9}{'measured':>10}"
+          f"{'Δelev':>8}")
     for r in rows:
-        print(f"  {r['station_id']:16} {r['first']:%Y-%m-%d} to {r['last']:%Y-%m-%d %H:%M}  "
-              f"{r['hours']:>7} hours, {r['gust_hours']:>7} with gusts")
+        rr = float(r["r"]) if r["r"] is not None else float("nan")
+        print(f"  {r['resort_id']:<17}{r['n']:>7,}{rr:>7.2f}"
+              f"{float(r['model_cm']):>8.0f}cm{float(r['measured_cm']):>9.0f}cm"
+              f"{r['elev_diff_m']:>+8}")
+    good = [r for r in rows if r["r"] is not None and float(r["r"]) >= 0.7]
+    print(f"\n  {len(good)} of {len(rows)} resorts correlate at 0.7 or better.")
+    print("  The levels are not meant to agree — ERA5 is modelled at the summit "
+          "and the station\n  sits a kilometre or more below, so it should read "
+          "far deeper. What is being tested\n  is whether they rise and fall "
+          "together, which is what the climate tab's trends rest on.\n")
+    return 0
 
 
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = sys.argv[1:]
-    if "--update" in args:
-        update_recent()
-    elif "--status" in args:
-        status()
-    elif "--backfill" in args:
-        named = next((a for a in args if not a.startswith("--")), None)
-        backfill(named)
-    else:
-        print(__doc__)
+    if "--download" in args:
+        return download(force="--force" in args)
+    if "--peek" in args:
+        peek(args[args.index("--peek") + 1])
+        return 0
+    if "--match" in args:
+        match()
+        return 0
+    if "--load" in args:
+        return load()
+    if "--status" in args:
+        return status()
+    if "--compare" in args:
+        return compare()
+    print(__doc__)
     return 0
 
 
