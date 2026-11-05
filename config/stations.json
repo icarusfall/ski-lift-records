@@ -1,0 +1,27 @@
+{
+  "_about": "Official measuring stations near the lifts, surveyed 5 Nov 2026. Both are free, keyless and CC BY. Gust definitions differ: MeteoSwiss is the 1-second peak, SLF IMIS the 5-second peak, so SLF gusts read slightly lower for the same wind.",
+  "stations": [
+    {
+      "id": "meteoswiss-GOR",
+      "source": "meteoswiss",
+      "code": "GOR",
+      "name": "Gornergrat",
+      "latitude": 45.98364,
+      "longitude": 7.78594,
+      "elevation_m": 3129,
+      "resort_ids": ["zermatt", "cervinia"],
+      "note": "SwissMetNet crest station, hourly since July 1993. About 8 km from the Testa Grigia / Klein Matterhorn link."
+    },
+    {
+      "id": "slf-ZER1",
+      "source": "slf",
+      "code": "ZER1",
+      "name": "Platthorn",
+      "latitude": 46.05366,
+      "longitude": 7.73633,
+      "elevation_m": 3345,
+      "resort_ids": ["zermatt", "cervinia"],
+      "note": "IMIS wind station above the Rothorn sector, 30-minute readings since October 1998. High and exposed, so the sensor can rime up in storms."
+    }
+  ]
+}
