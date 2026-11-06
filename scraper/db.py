@@ -550,12 +550,18 @@ def set_resort_enabled(resort_id: str, enabled: bool):
 
 
 def get_collected_resorts(snapshot_date, slot: str) -> set[str]:
-    """Resort ids that already have a clean snapshot for this date and slot."""
+    """Resort ids that already have a clean snapshot for this date and slot.
+
+    A resort whose bergfex counts are deliberately not used counts as
+    collected: scraping it again would give the same answer.
+    """
+    from .scrapers import NOT_TRUSTED
     with cursor() as cur:
         cur.execute("""
             SELECT resort_id FROM snapshots
-            WHERE snapshot_date = %s AND slot = %s AND scrape_error IS NULL
-        """, (snapshot_date, slot))
+            WHERE snapshot_date = %s AND slot = %s
+              AND (scrape_error IS NULL OR scrape_error = %s)
+        """, (snapshot_date, slot, NOT_TRUSTED))
         return {row["resort_id"] for row in cur.fetchall()}
 
 

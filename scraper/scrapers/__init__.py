@@ -43,13 +43,38 @@ def _run_primary(resort: dict) -> ResortSnapshot:
     return snap
 
 
+def bergfex_counts_trusted(resort: dict) -> bool:
+    """Whether bergfex's lift counts may stand as the headline figure.
+
+    Measured Aug-Nov 2026 against the resorts' own sites, bergfex outside
+    Austria was missing (7 resorts never parse), frozen (Zermatt 1/54 for a
+    week from a 29 Oct report) or wrong while current (Les Menuires 22/30 when
+    the resort said nothing was open). In Austria, its home market, it parses
+    every time and agreed with skiarlberg.at. Accuracy beats continuity: a
+    missing day is honest, a wrong one is not. "bergfex_lifts" in
+    resorts.json overrides the country rule for one resort.
+    """
+    return resort.get("bergfex_lifts", resort.get("country") == "AT")
+
+
+NOT_TRUSTED = "No primary source; bergfex lift counts not used outside Austria"
+
+
 def run_scraper(resort: dict) -> ResortSnapshot:
     scraper_type = resort.get("scraper", "bergfex")
 
     # Bergfex-only resorts: one source, one reading.
     if scraper_type == "bergfex":
         snap = bergfex.scrape(resort["id"], resort["bergfex_slug"])
+        # Its numbers are still recorded as a reading, for comparison once
+        # the resort gets a primary scraper.
         snap.source_readings = [_reading(snap)]
+        if not snap.error and not bergfex_counts_trusted(resort):
+            # Keep bergfex's snow report; drop its lift and piste counts.
+            snap.lifts = []
+            snap.pistes_open_km = snap.pistes_total_km = None
+            snap.error = NOT_TRUSTED
+            snap.error_is_final = True
         return snap
 
     primary = _run_primary(resort)
@@ -64,7 +89,8 @@ def run_scraper(resort: dict) -> ResortSnapshot:
 
     # Resorts where bergfex is known to be wrong set "bergfex_fallback": false,
     # so a failed primary records a failed day rather than bergfex's numbers.
-    if primary.error and bfx is not None and resort.get("bergfex_fallback", True):
+    if (primary.error and bfx is not None and resort.get("bergfex_fallback", True)
+            and bergfex_counts_trusted(resort)):
         # Fall back to the bergfex snapshot for the headline numbers
         bfx.source = f"bergfex.com (fallback from {scraper_type})"
         bfx.source_readings = readings

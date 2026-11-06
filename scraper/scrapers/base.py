@@ -110,6 +110,8 @@ class ResortSnapshot:
     wind_dir_dominant_deg: Optional[int] = None
     wind_700hpa_dir_deg: Optional[int] = None
     error: Optional[str] = None
+    # True when the error is a decision, not a failure, so retrying is pointless.
+    error_is_final: bool = False
     source_readings: list["SourceReading"] = field(default_factory=list)
 
     @property
