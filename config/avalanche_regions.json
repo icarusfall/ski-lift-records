@@ -1,10 +1,11 @@
 {
-  "_about": "Each resort's EAWS avalanche warning micro-region, found by testing the resort's coordinates against regions.avalanches.org outlines (4 Nov 2026). 'file' is the per-region daily bulletin file; 'regions' lists the micro-region ids newest first, older ids kept because some regions were split and renamed.",
+  "_about": "Each resort's EAWS avalanche warning micro-region, found by testing the resort's coordinates against regions.avalanches.org outlines (4 Nov 2026). 'file' is the per-region daily bulletin file; 'regions' lists the micro-region ids newest first, older ids kept because some regions were split and renamed. Aosta (IT-23) ids carried a letter before March 2022 (AO-20 was AO-D20).",
   "resorts": {
     "cervinia": {
       "file": "IT-23",
       "regions": [
-        "IT-23-AO-20"
+        "IT-23-AO-20",
+        "IT-23-AO-D20"
       ]
     },
     "zermatt": {
@@ -164,19 +165,22 @@
     "monterosa": {
       "file": "IT-23",
       "regions": [
-        "IT-23-AO-25"
+        "IT-23-AO-25",
+        "IT-23-AO-B25"
       ]
     },
     "la-thuile": {
       "file": "IT-23",
       "regions": [
-        "IT-23-AO-15"
+        "IT-23-AO-15",
+        "IT-23-AO-D15"
       ]
     },
     "courmayeur": {
       "file": "IT-23",
       "regions": [
-        "IT-23-AO-14"
+        "IT-23-AO-14",
+        "IT-23-AO-D14"
       ]
     },
     "livigno": {
