@@ -51,6 +51,13 @@ def _fetch(day: date, file: str) -> list[dict] | None:
     return resp.json().get("bulletins", [])
 
 
+def _utc(stamp: str) -> datetime:
+    """Some older bulletins carry no offset (and Python 3.10 cannot read a
+    trailing Z); both mean UTC."""
+    t = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
 def _pick(bulletins: list[dict], region_ids: list[str], day: date) -> tuple[str, dict] | None:
     """The bulletin covering this resort at midday, else the latest issued.
 
@@ -67,9 +74,8 @@ def _pick(bulletins: list[dict], region_ids: list[str], day: date) -> tuple[str,
             continue
         vt = b.get("validTime", {})
         try:
-            covers = (datetime.fromisoformat(vt["startTime"]) <= noon
-                      < datetime.fromisoformat(vt["endTime"]))
-        except (KeyError, ValueError):
+            covers = _utc(vt["startTime"]) <= noon < _utc(vt["endTime"])
+        except (KeyError, ValueError, TypeError):
             covers = False
         candidates.append((covers, b.get("publicationTime", ""), region, b))
     if not candidates:
