@@ -466,6 +466,25 @@ CREATE TABLE IF NOT EXISTS weather_hourly (
     PRIMARY KEY (resort_id, time)
 );
 
+-- What the forecast said a day or two ahead, for the same hours as
+-- weather_hourly. From Open-Meteo's previous-runs archive (from late January
+-- 2024). lead_days 1 is the forecast issued about 24 hours before the hour,
+-- 2 about 48. Answers "was this closure predictable the night before?".
+CREATE TABLE IF NOT EXISTS forecast_hourly (
+    resort_id        VARCHAR(50) NOT NULL REFERENCES resorts(id),
+    time             TIMESTAMP NOT NULL,
+    lead_days        SMALLINT NOT NULL,
+    wind_gust_kmh    NUMERIC(5,1),
+    wind_speed_kmh   NUMERIC(5,1),
+    wind_dir_deg     SMALLINT,
+    temp_c           NUMERIC(4,1),
+    snowfall_cm      NUMERIC(5,2),
+    precipitation_mm NUMERIC(5,1),
+    cloud_cover_pct  SMALLINT,
+    weather_code     SMALLINT,
+    PRIMARY KEY (resort_id, time, lead_days)
+);
+
 -- Measured weather from official stations near the lifts (config/stations.json).
 -- The modelled wind above is a grid cell; these are real anemometers, kept to
 -- test whether the crosswind null was the instrument's fault.

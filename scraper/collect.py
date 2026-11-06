@@ -246,6 +246,12 @@ def main():
             update_hourly()
         except Exception as e:
             print(f"Hourly weather update skipped: {e}")
+        # The day-ahead and two-day-ahead forecasts for the same hours.
+        try:
+            from .forecast_archive import update_recent as update_forecasts
+            update_forecasts()
+        except Exception as e:
+            print(f"Archived forecast update skipped: {e}")
 
     # The "when the snow arrives" view sets this autumn against the last 35,
     # which only works if the weather record keeps up through the season.
