@@ -68,7 +68,8 @@ def _pick(bulletins: list[dict], region_ids: list[str], day: date) -> tuple[str,
     noon = datetime(day.year, day.month, day.day, 11, tzinfo=timezone.utc)
     candidates = []
     for b in bulletins:
-        ids = {r["regionID"] for r in b.get("regions", [])}
+        # Files from spring 2022 to spring 2023 spell it regionId.
+        ids = {r.get("regionID") or r.get("regionId") for r in b.get("regions", [])}
         region = next((r for r in region_ids if r in ids), None)
         if not region:
             continue
