@@ -128,6 +128,21 @@
   .bar-mini { display: inline-block; width: 70px; height: 7px; background: var(--wash);
               border-radius: 4px; overflow: hidden; vertical-align: 0px; }
   .bar-mini i { display: block; height: 7px; border-radius: 4px; }
+  .sunmap { position: relative; height: 340px; border: 1px solid var(--grid);
+            border-radius: 6px; overflow: hidden; margin: 0.4rem 0 0.3rem; }
+  .sunmap .mapboxgl-canvas-container { cursor: crosshair; }
+  .sunmap-msg { position: absolute; left: 0; right: 0; top: 45%; text-align: center;
+                font-size: 0.8rem; color: var(--muted); pointer-events: none; }
+  .sun-result { display: flex; gap: 0.4rem 1.2rem; flex-wrap: wrap; align-items: baseline;
+                margin: 0.7rem 0 0.2rem; font-size: 0.85rem; }
+  .sun-result b { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+  .sun-legend { display: flex; gap: 0.9rem; flex-wrap: wrap; font-size: 0.72rem;
+                color: var(--muted); }
+  .sun-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+                  vertical-align: -1px; margin-right: 4px; border: 1px solid #fff; }
+  .sun-spot-group, .sun-spot-sel { max-width: 100%; min-width: 0; }
+  .sun-table-wrap { overflow-x: auto; }
+  @media (max-width: 600px) { .sunmap { height: 260px; } }
 </style>
 </head>
 <body>
@@ -377,6 +392,12 @@ function readHash() {
   const m = q.get("metric");
   if (m && CLIMATE_METRICS[m]) clim.metric = m;
   if (/^\d{4}-\d{2}-\d{2}$/.test(q.get("date") || "")) sunOpts.date = q.get("date");
+  // A spot picked on the sun tab's map, so a link carries the bar, not just the resort.
+  const spotAt = (q.get("at") || "").split(",").map(Number);
+  if (spotAt.length === 2 && spotAt.every(Number.isFinite)) {
+    if (!sunSpot || sunSpot.lat !== spotAt[0] || sunSpot.lon !== spotAt[1])
+      sunSpot = { lat: spotAt[0], lon: spotAt[1], resort: sunOpts.resort };
+  } else if (tab === "sun") sunSpot = null;
 }
 function writeHash() {
   const q = new URLSearchParams();
@@ -390,6 +411,7 @@ function writeHash() {
   if (tab === "climate") { q.set("from", clim.from); q.set("to", clim.to); q.set("metric", clim.metric); }
   if (tab === "plan") { q.set("from", planFrom); q.set("to", planTo); }
   if (tab === "sun") q.set("date", sunOpts.date);
+  if (tab === "sun" && sunSpot) q.set("at", sunSpot.lat + "," + sunSpot.lon);
   // Commas are legal in a fragment and read better left alone.
   history.replaceState(null, "", "#" + q.toString().replace(/%2C/g, ","));
 }
@@ -976,6 +998,203 @@ function renderPlan(host) {
 /* ---------- when the mountain takes the sun ---------- */
 let SUN = null, sunLoading = false, sunPoint = null;
 let sunOpts = { resort: "cervinia", date: "2027-02-14" };
+// A spot picked on the map that is not a lift station — a terrace, a bar. Its
+// horizon is worked out on the server from the resort's terrain patch, the
+// same call the lift map's sun mode makes. `data` holds the answer once in.
+let sunSpot = null;
+
+/* The map. Mapbox is the lift map's library and token, loaded only when
+   someone opens this tab. The map lives in one DOM node that every render
+   re-attaches, because render() rebuilds the view from scratch and a fresh
+   WebGL map per keystroke would be slow and would lose the visitor's pan. */
+const MAPBOX_TOKEN = {{ mapbox_token | tojson }};
+const MAPBOX_VER = "v3.29.0";
+let mapboxLoad = null, sunMap = null, sunMapNode = null, sunMapReady = false;
+let sunMapFitted = null, sunMapCentred = null, sunSpotMarker = null;
+
+function loadMapbox() {
+  if (mapboxLoad) return mapboxLoad;
+  mapboxLoad = new Promise((ok, fail) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = `https://api.mapbox.com/mapbox-gl-js/${MAPBOX_VER}/mapbox-gl.css`;
+    document.head.appendChild(css);
+    const js = document.createElement("script");
+    js.src = `https://api.mapbox.com/mapbox-gl-js/${MAPBOX_VER}/mapbox-gl.js`;
+    js.onload = ok;
+    js.onerror = () => fail(new Error("could not load the map library"));
+    document.head.appendChild(js);
+  });
+  return mapboxLoad;
+}
+
+function sunMapElement() {
+  if (sunMapNode) return sunMapNode;
+  // Mapbox wants its container empty, so the message sits beside it.
+  const canvasBox = el("div", { style: "position:absolute;inset:0;" });
+  sunMapNode = el("div", { class: "sunmap" }, canvasBox,
+    el("div", { class: "sunmap-msg", text: "Loading the map…" }));
+  const say = text => {
+    const msg = sunMapNode.querySelector(".sunmap-msg");
+    if (msg) msg.textContent = text;
+  };
+  loadMapbox().then(() => {
+    mapboxgl.accessToken = MAPBOX_TOKEN;
+    sunMap = new mapboxgl.Map({
+      container: canvasBox,
+      style: "mapbox://styles/mapbox/outdoors-v12",
+      center: [7.63, 45.93], zoom: 12,
+      // Inside a scrolling page a bare scroll or one-finger drag must move the
+      // page, not the map. Taps and clicks still pick a spot.
+      cooperativeGestures: true,
+      dragRotate: false, pitchWithRotate: false,
+    });
+    sunMap.touchZoomRotate.disableRotation();
+    sunMap.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+    sunMap.addControl(new mapboxgl.ScaleControl({ unit: "metric" }));
+    window.sunMap = sunMap;          // debug handle, as on the lift map
+    sunMap.on("load", () => {
+      const msg = sunMapNode.querySelector(".sunmap-msg");
+      if (msg) msg.remove();
+      sunMap.addSource("sun-stations", { type: "geojson",
+        data: { type: "FeatureCollection", features: [] } });
+      sunMap.addLayer({ id: "sun-stations", type: "circle", source: "sun-stations",
+        paint: {
+          // Grey in shade, amber in sun: the share of the flat-horizon day
+          // each station keeps.
+          "circle-color": ["interpolate", ["linear"], ["get", "keep"],
+                           0, "#4a4944", 0.5, "#a89f86", 1, "#eda100"],
+          "circle-radius": ["case", ["get", "chosen"], 8, 5],
+          "circle-stroke-color": ["case", ["get", "chosen"], "#0b0b0b", "#ffffff"],
+          "circle-stroke-width": ["case", ["get", "chosen"], 2.5, 1.2],
+        } });
+      sunMap.on("mouseenter", "sun-stations", () => { sunMap.getCanvas().style.cursor = "pointer"; });
+      sunMap.on("mouseleave", "sun-stations", () => { sunMap.getCanvas().style.cursor = ""; });
+      sunMap.on("mousemove", "sun-stations", e => {
+        const f = e.features[0].properties;
+        showTip(`<div class="t-date">${f.name}</div><table>`
+          + `<tr><td>Sun</td><td>${f.window}</td></tr>`
+          + `<tr><td>Hours</td><td>${f.hours}</td></tr></table>`,
+          e.originalEvent.clientX, e.originalEvent.clientY);
+      });
+      sunMap.on("mouseleave", "sun-stations", hideTip);
+      sunMap.on("click", sunMapClick);
+      sunMapReady = true;
+      syncSunMap();
+    });
+    sunMap.on("error", e => console.warn("mapbox:", e && e.error && e.error.message));
+    // Single tiles time out routinely; only a style that never arrives is
+    // worth saying anything about.
+    setTimeout(() => {
+      if (!sunMapReady) say("The map did not load. Stations can still be picked from the list.");
+    }, 20000);
+  }).catch(err => {
+    say("The map could not load (" + err.message + "). Stations can still be picked from the list.");
+  });
+  return sunMapNode;
+}
+
+function sunMapClick(e) {
+  if (!SUN || !SUN.points) return;
+  // A tap within a few pixels of a station is that station: same stored
+  // horizon, so the same answer as choosing it by name.
+  const pad = 8, p = e.point;
+  const hit = sunMap.queryRenderedFeatures([[p.x - pad, p.y - pad], [p.x + pad, p.y + pad]],
+                                           { layers: ["sun-stations"] });
+  hideTip();
+  if (hit.length) {
+    // Nearest of the hits, in case two stations overlap at this zoom.
+    let best = hit[0], bd = Infinity;
+    for (const f of hit) {
+      const q = sunMap.project(f.geometry.coordinates);
+      const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
+      if (d < bd) { bd = d; best = f; }
+    }
+    const st = SUN.points[best.properties.i];
+    sunSpot = null;
+    sunPoint = st;
+    sunMapCentred = sunPointKey(st);      // they clicked it: do not pan away
+    render();
+    return;
+  }
+  sunSpot = { lat: +e.lngLat.lat.toFixed(5), lon: +e.lngLat.lng.toFixed(5),
+              resort: sunOpts.resort };
+  sunMapCentred = sunPointKey(null);
+  render();
+}
+
+function loadSunSpot() {
+  const s = sunSpot;
+  if (s.loading) return;
+  s.loading = true;
+  const day = sunOpts.date;
+  fetch(`/api/sun-at.json?resort=${s.resort}&lat=${s.lat}&lon=${s.lon}&date=${day}`)
+    .then(r => r.json())
+    .then(d => {
+      if (sunSpot !== s) return;           // superseded by another click
+      s.loading = false;
+      if (d.error) { s.error = d.error; s.data = null; }
+      else { s.error = null; s.data = d; }
+      s.date = day;
+      render();
+    })
+    .catch(e => {
+      if (sunSpot !== s) return;
+      s.loading = false; s.error = e.message; s.date = day; render();
+    });
+}
+
+const sunPointKey = p => p ? `${p.name}|${p.kind}|${p.lat}|${p.lon}`
+                           : (sunSpot ? `spot|${sunSpot.lat}|${sunSpot.lon}` : "");
+
+function syncSunMap() {
+  if (!sunMapReady || !SUN || !SUN.points || SUN.resort_id !== sunOpts.resort) return;
+  const src = sunMap.getSource("sun-stations");
+  if (!src) return;     // style reloading
+  sunMap.resize();      // the node may have been re-attached at a new width
+  const flat = SUN.points.find(p => p.flat_first);
+  const flatH = flat ? hhmmToH(flat.flat_last) - hhmmToH(flat.flat_first) : 10;
+  src.setData({ type: "FeatureCollection",
+    features: SUN.points.map((p, i) => ({ type: "Feature",
+      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+      properties: { i, name: p.name, hours: fmt(p.hours, 1),
+        window: p.first ? `${p.first}–${p.last}` : "none",
+        keep: Math.max(0, Math.min(1, (p.hours || 0) / flatH)),
+        chosen: !sunSpot && p === sunPoint } })) });
+
+  if (sunSpot) {
+    if (!sunSpotMarker) sunSpotMarker = new mapboxgl.Marker({ color: "#2b6cb0" });
+    sunSpotMarker.setLngLat([sunSpot.lon, sunSpot.lat]).addTo(sunMap);
+  } else if (sunSpotMarker) sunSpotMarker.remove();
+
+  const key = sunSpot ? sunPointKey(null) : sunPointKey(sunPoint);
+  if (sunMapFitted !== SUN.resort_id) {
+    // A new resort: frame the lifts around its village, then centre on the
+    // chosen place if that is somewhere the frame missed. Not every station:
+    // the lift bounding box runs down the valley (Cervinia's reaches Zermatt
+    // and the Aosta road), and framing all of it opens on a whole region.
+    const mid = SUN.points.find(p => p.centre) || SUN.points[0];
+    const kx = Math.cos(mid.lat * Math.PI / 180);
+    const near = SUN.points.filter(p =>
+      Math.hypot(p.lat - mid.lat, (p.lon - mid.lon) * kx) * 111 < 5);
+    const b = new mapboxgl.LngLatBounds();
+    for (const p of near) b.extend([p.lon, p.lat]);
+    sunMap.fitBounds(b, { padding: 30, maxZoom: 13.5, duration: 0 });
+    sunMapFitted = SUN.resort_id;
+    sunMapCentred = key;
+    const c = sunSpot ? [sunSpot.lon, sunSpot.lat] : sunPoint && [sunPoint.lon, sunPoint.lat];
+    if (c && !sunMap.getBounds().contains(c)) sunMap.setCenter(c);
+  } else if (key !== sunMapCentred) {
+    // Chosen by name: bring it to the middle of the map.
+    sunMapCentred = key;
+    const c = sunSpot ? [sunSpot.lon, sunSpot.lat] : [sunPoint.lon, sunPoint.lat];
+    sunMap.easeTo({ center: c, zoom: Math.max(sunMap.getZoom(), 13), duration: 700 });
+  }
+}
+
+function pickSunStation(p) {
+  sunSpot = null; sunPoint = p; render();
+}
 
 function loadSun() {
   if (sunLoading) return;
@@ -996,7 +1215,7 @@ function renderSun(host) {
 
   const ctl = el("div", { class: "controls", style: "margin-bottom:0.6rem;" });
   const rs = el("select", { onchange: e => {
-    sunOpts.resort = e.target.value; SUN = null; sunPoint = null; render(); } });
+    sunOpts.resort = e.target.value; SUN = null; sunPoint = null; sunSpot = null; render(); } });
   for (const r of RESORTS) {
     const o = el("option", { value: r.id, text: r.name });
     if (sunOpts.resort === r.id) o.setAttribute("selected", "");
@@ -1007,7 +1226,18 @@ function renderSun(host) {
   dp.addEventListener("change", e => {
     if (e.target.value) { sunOpts.date = e.target.value; SUN = null; render(); } });
   ctl.appendChild(el("div", { class: "group" }, el("label", { text: "Date:" }), dp));
+  const stSel = el("select", { class: "sun-spot-sel", onchange: e => {
+    if (SUN && SUN.points && e.target.value !== "") pickSunStation(SUN.points[+e.target.value]); } });
+  ctl.appendChild(el("div", { class: "group sun-spot-group" }, el("label", { text: "Spot:" }), stSel));
   host.appendChild(ctl);
+
+  if (MAPBOX_TOKEN) {
+    host.appendChild(sunMapElement());
+    host.appendChild(el("p", { class: "hint", style: "margin-top:0;",
+      text: "Click the map where you will be sitting — a terrace, a bar, a lift queue — or "
+          + "click a dot to take that lift station. Dots run from grey (in shade most of "
+          + "the day) to amber (keeps nearly all of it)." }));
+  }
 
   if (SUN && SUN.error) {
     host.appendChild(el("p", { class: "sub", text: "Could not load: " + SUN.error }));
@@ -1032,18 +1262,61 @@ function renderSun(host) {
     // is Moutiers, neither of which is the resort anyone means.
     sunPoint = pts.find(p => p.centre) || pts[0];
   }
+  // The station list, alphabetical so a name can be found.
+  const byName = SUN.points.map((p, i) => [p, i])
+    .sort((a, b) => a[0].name.localeCompare(b[0].name) || (b[0].elevation_m - a[0].elevation_m));
+  if (sunSpot) stSel.appendChild(el("option", { value: "", text: "Your spot on the map" }));
+  for (const [p, i] of byName) {
+    const o = el("option", { value: i,
+      text: p.name + (p.elevation_m ? ` (${p.elevation_m} m, ${p.kind})` : ` (${p.kind})`) });
+    if (!sunSpot && p === sunPoint) o.setAttribute("selected", "");
+    stSel.appendChild(o);
+  }
+
   const flat = pts.find(p => p.flat_first) || {};
+  const flatH = flat.flat_first ? hhmmToH(flat.flat_last) - hhmmToH(flat.flat_first) : null;
+  syncSunMap();
+
+  // The place being shown: a picked spot once its horizon is in, else a station.
+  let shown = sunPoint, shownName = sunPoint.name
+    + (sunPoint.elevation_m ? ` (${sunPoint.elevation_m} m, ${sunPoint.kind})` : "");
+  if (sunSpot) {
+    if (sunSpot.resort !== sunOpts.resort) sunSpot.resort = sunOpts.resort;
+    if (sunSpot.date !== sunOpts.date && !sunSpot.loading) loadSunSpot();
+    if (sunSpot.loading || sunSpot.date !== sunOpts.date) {
+      host.appendChild(el("p", { class: "sub", text: "Working out the skyline from your spot…" }));
+      return;
+    }
+    if (sunSpot.error) {
+      host.appendChild(el("p", { class: "sub", text: "No answer at that spot: " + sunSpot.error
+        + (sunSpot.error.includes("outside") ? ". Pick somewhere nearer this resort's lifts." : ".") }));
+      return;
+    }
+    shown = Object.assign({ name: "your spot", kind: "picked on the map" }, sunSpot.data);
+    shownName = `your spot (${sunSpot.data.elevation_m} m, ${sunSpot.lat.toFixed(4)}, ${sunSpot.lon.toFixed(4)})`;
+  }
+  const lostShown = flatH != null ? flatH - shown.hours : null;
+  host.appendChild(el("div", { class: "sun-result" },
+    el("span", { text: shownName.charAt(0).toUpperCase() + shownName.slice(1) }),
+    el("span", {}, document.createTextNode("sun "),
+       el("b", { text: shown.first ? `${shown.first}–${shown.last}` : "none all day" })),
+    el("span", {}, el("b", { text: fmt(shown.hours, 1) }), document.createTextNode(" h")),
+    lostShown != null
+      ? el("span", { text: `${fmt(lostShown, 1)} h lost to terrain`
+          + (shown.windows > 1 ? ` · ${shown.windows} separate windows` : "") })
+      : null));
+
   host.appendChild(el("p", { class: "sub",
     text: `With no mountains at all the sun would be up ${flat.flat_first}–${flat.flat_last}. `
         + `Across ${pts.length} stations the median is `
         + fmt(pts[Math.floor(pts.length / 2)].hours, 1) + " hours." }));
 
-  host.appendChild(sunPathChart(sunPoint, SUN.track));
+  host.appendChild(sunPathChart(shown, SUN.track));
   host.appendChild(el("p", { class: "hint",
-    text: "The filled shape is the skyline seen from " + sunPoint.name
-        + (sunPoint.elevation_m ? ` (${sunPoint.elevation_m} m, ${sunPoint.kind})` : "")
+    text: "The filled shape is the skyline seen from " + shownName
         + ". The curve is the sun's path across the sky that day — where it dips into "
-        + "the shape, the station is in shadow. Pick another station from the table." }));
+        + "the shape, that spot is in shadow. Pick another place on the map, from the list, "
+        + "or from the table." }));
 
   const t = el("table", { class: "league" });
   t.appendChild(el("thead", {}, el("tr", {},
@@ -1053,8 +1326,8 @@ function renderSun(host) {
   const tb = el("tbody");
   for (const p of pts) {
     const tr = el("tr", { style: "cursor:pointer;"
-      + (p === sunPoint ? "background:" + WASH + ";" : "") });
-    tr.addEventListener("click", () => { sunPoint = p; render(); window.scrollTo({ top: 0 }); });
+      + (!sunSpot && p === sunPoint ? "background:" + WASH + ";" : "") });
+    tr.addEventListener("click", () => { pickSunStation(p); window.scrollTo({ top: 0 }); });
     tr.appendChild(el("td", { text: p.name + (p.windows > 1 ? "  ⚑" : "") }));
     tr.appendChild(el("td", { text: p.elevation_m == null ? "—" : String(p.elevation_m) }));
     tr.appendChild(el("td", { text: p.kind }));
@@ -1068,7 +1341,7 @@ function renderSun(host) {
     tb.appendChild(tr);
   }
   t.appendChild(tb);
-  host.appendChild(t);
+  host.appendChild(el("div", { class: "sun-table-wrap" }, t));
   host.appendChild(el("p", { class: "hint",
     text: "⚑ marks a station whose day is broken into more than one window — a peak due "
         + "south can take the sun away and hand it back. Heights come from a 30 m terrain "
