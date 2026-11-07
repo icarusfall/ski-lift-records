@@ -466,6 +466,25 @@ CREATE TABLE IF NOT EXISTS weather_hourly (
     PRIMARY KEY (resort_id, time)
 );
 
+-- What the forecast said a day or two ahead, for the same hours as
+-- weather_hourly. From Open-Meteo's previous-runs archive (from late January
+-- 2024). lead_days 1 is the forecast issued about 24 hours before the hour,
+-- 2 about 48. Answers "was this closure predictable the night before?".
+CREATE TABLE IF NOT EXISTS forecast_hourly (
+    resort_id        VARCHAR(50) NOT NULL REFERENCES resorts(id),
+    time             TIMESTAMP NOT NULL,
+    lead_days        SMALLINT NOT NULL,
+    wind_gust_kmh    NUMERIC(5,1),
+    wind_speed_kmh   NUMERIC(5,1),
+    wind_dir_deg     SMALLINT,
+    temp_c           NUMERIC(4,1),
+    snowfall_cm      NUMERIC(5,2),
+    precipitation_mm NUMERIC(5,1),
+    cloud_cover_pct  SMALLINT,
+    weather_code     SMALLINT,
+    PRIMARY KEY (resort_id, time, lead_days)
+);
+
 -- Measured weather from official stations near the lifts (config/stations.json).
 -- The modelled wind above is a grid cell; these are real anemometers, kept to
 -- test whether the crosswind null was the instrument's fault.
@@ -531,12 +550,18 @@ def set_resort_enabled(resort_id: str, enabled: bool):
 
 
 def get_collected_resorts(snapshot_date, slot: str) -> set[str]:
-    """Resort ids that already have a clean snapshot for this date and slot."""
+    """Resort ids that already have a clean snapshot for this date and slot.
+
+    A resort whose bergfex counts are deliberately not used counts as
+    collected: scraping it again would give the same answer.
+    """
+    from .scrapers import NOT_TRUSTED
     with cursor() as cur:
         cur.execute("""
             SELECT resort_id FROM snapshots
-            WHERE snapshot_date = %s AND slot = %s AND scrape_error IS NULL
-        """, (snapshot_date, slot))
+            WHERE snapshot_date = %s AND slot = %s
+              AND (scrape_error IS NULL OR scrape_error = %s)
+        """, (snapshot_date, slot, NOT_TRUSTED))
         return {row["resort_id"] for row in cur.fetchall()}
 
 
