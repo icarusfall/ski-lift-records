@@ -243,7 +243,10 @@ def _plain(v):
 
 @app.route("/explore")
 def explore():
-    return render_template("explore.html")
+    # The sun tab borrows the lift map's Mapbox token so a visitor can pick a
+    # spot by clicking it rather than having to know its name.
+    return render_template("explore.html",
+                           mapbox_token=os.environ.get("MAPBOX_TOKEN", ""))
 
 
 @app.route("/api/explorer.json")
