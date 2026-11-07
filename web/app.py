@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from flask import (Flask, flash, jsonify, redirect, render_template,
                    request, session, url_for, Response)
 from scraper.db import (cursor, get_setting, set_setting, set_resort_enabled)
+from scraper.model import CLIMATE_FLOOR_SQL
 
 app = Flask(__name__)
 
@@ -193,7 +194,7 @@ def index():
         span = cur.fetchone()
         cur.execute("SELECT COUNT(*) AS n FROM lift_readings")
         readings = cur.fetchone()["n"]
-        cur.execute("SELECT MIN(date) AS first FROM climate_daily")
+        cur.execute(f"SELECT MIN(date) AS first FROM climate_daily WHERE {CLIMATE_FLOOR_SQL}")
         climate_from = cur.fetchone()["first"]
     return render_template("index.html", resorts=resorts, span=span,
                            readings=readings, climate_from=climate_from,
@@ -557,7 +558,7 @@ def api_climate():
                    AVG(c.wind_gust_max_kmh)  AS gust,
                    AVG(c.cloud_cover_pct)    AS cloud
             FROM climate_daily c
-            WHERE {window}
+            WHERE {window} AND {CLIMATE_FLOOR_SQL}
             GROUP BY c.resort_id, season
             ORDER BY c.resort_id, season
         """, {"a": start, "b": end})
@@ -945,6 +946,7 @@ def _autumn_rows(resort_id: str | None):
                        AS season
             FROM climate_daily
             WHERE EXTRACT(MONTH FROM date) IN (10, 11, 12, 1) {where}
+              AND {CLIMATE_FLOOR_SQL}
             ORDER BY resort_id, date
         """, {"r": resort_id})
         return cur.fetchall()
