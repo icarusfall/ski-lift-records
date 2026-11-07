@@ -253,13 +253,13 @@ def main():
         except Exception as e:
             print(f"Archived forecast update skipped: {e}")
 
-    # The "when the snow arrives" view sets this autumn against the last 35,
-    # which only works if the weather record keeps up through the season.
-    # ERA5 lags real time by about five days, so once a week is plenty: the
-    # Monday midday run tops it up with 36 small requests. It runs after the
-    # lift collection and can never take that down with it.
-    if (resort_filter is None and slot == "midday" and not catch_up
-            and datetime.now(timezone.utc).weekday() == 0):
+    # The "when the snow arrives" and "season so far" views set this season
+    # against the last 35, which only works if the weather record keeps up.
+    # ERA5 lags real time by about six days; topping up weekly let the line
+    # fall up to a fortnight behind, so every midday run now asks for the few
+    # new days (36 small requests). It runs after the lift collection and can
+    # never take that down with it.
+    if resort_filter is None and slot == "midday" and not catch_up:
         try:
             from .climate import update_recent
             update_recent()

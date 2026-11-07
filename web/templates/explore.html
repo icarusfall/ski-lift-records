@@ -217,7 +217,8 @@ const TAB_GROUPS = [
     ["heatmap", "Season heatmap"], ["compare", "Compare resorts"],
     ["league", "League table"], ["lifts", "Lift by lift"]]],
   ["Your week", [
-    ["climate", "35 years of weather & snow"], ["arrival", "When the snow arrives"],
+    ["climate", "35 years of weather & snow"], ["sofar", "This season so far"],
+    ["arrival", "When the snow arrives"],
     ["plan", "Rank resorts for a week"], ["sun", "Sun & shadow"]]],
   ["The working", [
     ["model", "How it works"], ["scatter", "Scatter lab"], ["wind", "Wind vs open"]]],
@@ -380,12 +381,16 @@ function readHash() {
   }
   // One resort for the views that show a single mountain.
   const one = q.get("resort");
-  if (one) { liftPick = one; modelResort = one; sunOpts.resort = one; arr.resort = one; }
+  if (one) { liftPick = one; modelResort = one; sunOpts.resort = one; arr.resort = one;
+             sofar.resort = one; }
+  if (SOFAR_MEASURES[q.get("show")]) sofar.measure = q.get("show");
   const am = q.get("measure"), at = +q.get("threshold");
   if (ARR_MEASURES[am]) arr.measure = am;
   if (at > 0) arr.threshold = at;
   const a = q.get("from"), b = q.get("to");
-  if (MD.test(a || "") && MD.test(b || "")) {
+  if (tab === "sofar" && MD.test(a || "") && MD.test(b || "")) {
+    sofar.from = a; sofar.to = b;
+  } else if (MD.test(a || "") && MD.test(b || "")) {
     if (clim.from !== a || clim.to !== b) CLIM = null;
     clim.from = planFrom = a; clim.to = planTo = b;
   }
@@ -405,7 +410,9 @@ function writeHash() {
   if (tab === "compare" || tab === "wind" || tab === "climate")
     q.set("resorts", selection.join(","));
   const one = { lifts: liftPick, model: modelResort, sun: sunOpts.resort,
-                 arrival: arr.resort }[tab];
+                 arrival: arr.resort, sofar: sofar.resort }[tab];
+  if (tab === "sofar") { q.set("show", sofar.measure); q.set("from", sofar.from);
+                         q.set("to", sofar.to); }
   if (tab === "arrival") { q.set("measure", arr.measure); q.set("threshold", arr.threshold); }
   if (one) q.set("resort", one);
   if (tab === "climate") { q.set("from", clim.from); q.set("to", clim.to); q.set("metric", clim.metric); }
@@ -3081,13 +3088,314 @@ function renderModelTable(host, ids) {
         + "direction has to come in." }));
 }
 
+/* ---------- this season so far ---------- */
+/* "Is this year shaping up warm?" The season under way, drawn over every
+   earlier season on the same calendar days. ERA5 only, the season under way
+   included, so like is compared with like; it runs about a week behind. */
+const SOFAR_MEASURES = {
+  temp_mean: { label: "Mean temperature", unit: "°C", dp: 1, words: ["warmest", "coldest"] },
+  temp_max:  { label: "Daily maximum temperature", unit: "°C", dp: 1, words: ["warmest", "coldest"] },
+  temp_min:  { label: "Daily minimum temperature", unit: "°C", dp: 1, words: ["warmest", "coldest"] },
+  snowfall:  { label: "Snowfall, running total", unit: "cm", dp: 0, cum: true,
+               words: ["snowiest", "least snowy"] },
+  precip:    { label: "Precipitation, running total", unit: "mm", dp: 0, cum: true,
+               words: ["wettest", "driest"] },
+  gust:      { label: "Daily maximum gust", unit: "km/h", dp: 0, words: ["windiest", "calmest"] },
+  sunshine:  { label: "Sunshine", unit: "h", dp: 1, words: ["sunniest", "dullest"] },
+};
+const SOFAR_PRESETS = [
+  ["Autumn to January", "10-01", "01-31"], ["November", "11-01", "11-30"],
+  ["December", "12-01", "12-31"], ["Whole winter", "11-01", "04-30"],
+];
+let sofar = { resort: "cervinia", measure: "temp_mean", from: "10-01", to: "01-31",
+              smooth: true };
+const SOFAR = new Map();                 // "resort|from|to" -> payload
+
+function sofarKey() { return sofar.resort + "|" + sofar.from + "|" + sofar.to; }
+function loadSoFar() {
+  const k = sofarKey();
+  if (SOFAR.has(k)) return;
+  SOFAR.set(k, null);
+  fetch(`/api/season-so-far/${sofar.resort}.json?from=${sofar.from}&to=${sofar.to}`)
+    .then(r => r.json())
+    .then(d => { SOFAR.set(k, d); render(); })
+    .catch(e => { SOFAR.set(k, { error: e.message }); render(); });
+}
+/* Running total for the cumulative measures; for the rest an optional
+   trailing 7-day mean. Trailing, not centred, so the line for the season under
+   way ends on the last day actually measured instead of borrowing from days
+   that have not happened. */
+function sofarSeries(vals, M) {
+  if (M.cum) {
+    let t = 0;
+    return vals.map(v => v == null ? null : (t += v));
+  }
+  if (!sofar.smooth) return vals.slice();
+  return vals.map((v, i) => {
+    if (v == null) return null;
+    const w = vals.slice(Math.max(0, i - 6), i + 1).filter(x => x != null);
+    return w.length >= 4 ? w.reduce((a, b) => a + b, 0) / w.length : null;
+  });
+}
+const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? "th"
+  : ["th", "st", "nd", "rd"][n % 10] || "th");
+
+function renderSoFar(host) {
+  host.appendChild(el("h2", { text: "This season so far" }));
+  host.appendChild(el("p", { class: "sub",
+    text: "Is this season shaping up warm, snowy or windy? The season under way, drawn "
+        + "over every earlier season since 1991 on the same calendar days, from the ERA5 "
+        + "reanalysis at summit height." }));
+
+  const ctl = el("div", { class: "controls", style: "margin-bottom:0.5rem;" });
+  const pick = el("select", { onchange: e => { sofar.resort = e.target.value; render(); } });
+  for (const r of RESORTS) {
+    const o = el("option", { value: r.id, text: r.name });
+    if (r.id === sofar.resort) o.setAttribute("selected", "");
+    pick.appendChild(o);
+  }
+  ctl.appendChild(el("div", { class: "group" }, el("label", { text: "Resort:" }), pick));
+  const ms = el("select", { onchange: e => { sofar.measure = e.target.value; render(); } });
+  for (const [k, v] of Object.entries(SOFAR_MEASURES)) {
+    const o = el("option", { value: k, text: v.label });
+    if (sofar.measure === k) o.setAttribute("selected", "");
+    ms.appendChild(o);
+  }
+  ctl.appendChild(el("div", { class: "group" }, el("label", { text: "Showing:" }), ms));
+  host.appendChild(ctl);
+
+  const ctl2 = el("div", { class: "controls", style: "margin-bottom:0.6rem;" });
+  const presets = el("div", { class: "group" }, el("label", { text: "Window:" }));
+  for (const [name, a, b] of SOFAR_PRESETS)
+    presets.appendChild(el("button", {
+      class: "preset" + (sofar.from === a && sofar.to === b ? " active" : ""), text: name,
+      onclick: () => { sofar.from = a; sofar.to = b; render(); } }));
+  ctl2.appendChild(presets);
+  // Every day from 1 October to 31 May, on a calendar with no 29 February.
+  const mk = which => {
+    const s = el("select", { onchange: e => { sofar[which] = e.target.value; render(); } });
+    for (const mm of [10, 11, 12, 1, 2, 3, 4, 5]) {
+      const len = new Date(Date.UTC(2001, mm, 0)).getUTCDate();
+      for (let day = 1; day <= len; day++) {
+        const v = String(mm).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+        const o = el("option", { value: v, text: mdLabel(v) });
+        if (sofar[which] === v) o.setAttribute("selected", "");
+        s.appendChild(o);
+      }
+    }
+    return s;
+  };
+  ctl2.appendChild(el("div", { class: "group" }, el("label", { text: "From:" }), mk("from"),
+    el("label", { text: "to:" }), mk("to")));
+  host.appendChild(ctl2);
+
+  const D = SOFAR.get(sofarKey());
+  if (D === undefined || D === null) {
+    host.appendChild(el("p", { class: "sub", text: "Reading 35 seasons…" }));
+    loadSoFar();
+    return;
+  }
+  if (D.error) { host.appendChild(el("p", { class: "sub", text: "Could not load: " + D.error })); return; }
+
+  const M = SOFAR_MEASURES[sofar.measure];
+  if (!M.cum) {
+    const box = el("input", { type: "checkbox" });
+    box.checked = sofar.smooth;
+    box.addEventListener("change", () => { sofar.smooth = box.checked; render(); });
+    host.appendChild(el("label", { class: "hint",
+      style: "display:flex;gap:0.35rem;align-items:center;margin:-0.2rem 0 0.5rem;" },
+      box, document.createTextNode("Smooth each line to a 7-day average "
+        + "(untick for raw days: honest, but a tangle)")));
+  }
+
+  const past = D.seasons.filter(s => !s.current);
+  const cur = D.seasons.find(s => s.current);
+  const raw = s => s[sofar.measure];
+  const lastIdx = cur ? raw(cur).reduce((k, v, i) => v != null ? i : k, -1) : -1;
+  const lastLabel = D.last_date
+    ? +D.last_date.slice(8, 10) + " " + MONTHS[+D.last_date.slice(5, 7) - 1] : "—";
+
+  // The headline: the season under way against every earlier one, over
+  // exactly the days measured so far.
+  if (lastIdx >= 0) {
+    const agg = s => {
+      const v = raw(s).slice(0, lastIdx + 1).filter(x => x != null);
+      if (!v.length) return null;
+      const sum = v.reduce((a, b) => a + b, 0);
+      return M.cum ? sum : sum / v.length;
+    };
+    const mine = agg(cur);
+    const others = past.map(s => ({ season: s.season, v: agg(s) })).filter(o => o.v != null);
+    const higher = others.filter(o => o.v > mine).length;
+    const rank = higher + 1, of = others.length + 1;
+    const avg = others.reduce((a, o) => a + o.v, 0) / (others.length || 1);
+    const recent = others.slice(-10);
+    const avg10 = recent.reduce((a, o) => a + o.v, 0) / (recent.length || 1);
+    const sign = v => (v >= 0 ? "+" : "−") + fmt(Math.abs(v), M.dp);
+    const word = rank <= of / 2 ? ordinal(rank) + " " + M.words[0]
+                                : ordinal(of - rank + 1) + " " + M.words[1];
+    const span = mdLabel(D.days[0]) + " – " + mdLabel(D.days[lastIdx]);
+    const stats = el("div", { class: "stats" });
+    const tile = (v, l, n) => stats.appendChild(el("div", { class: "stat" },
+      el("div", { class: "stat-v", text: v }), el("div", { class: "stat-l", text: l }),
+      n ? el("div", { class: "stat-n", text: n }) : null));
+    tile(fmt(mine, M.dp) + " " + M.unit, seasonLabel(cur.season) + ", " + span,
+         M.cum ? "total so far" : "average of the days so far");
+    tile(sign(mine - avg) + " " + M.unit, "against the " + others.length + "-season average",
+         "average " + fmt(avg, M.dp) + " " + M.unit + ", same days");
+    tile(sign(mine - avg10) + " " + M.unit, "against the last " + recent.length + " seasons",
+         "average " + fmt(avg10, M.dp) + " " + M.unit + " — fairer if the climate has moved");
+    tile(word, "of " + of + " seasons over these days", "1 = " + M.words[0]);
+    host.appendChild(stats);
+  } else {
+    host.appendChild(el("p", { class: "sub", style: "color:var(--s2);",
+      text: "Nothing from this season inside the window yet: the record currently reaches "
+          + lastLabel + ". The earlier seasons are drawn for reference." }));
+  }
+
+  host.appendChild(soFarChart(D, M, past, cur, lastIdx));
+  host.appendChild(el("p", { class: "hint",
+    text: "ERA5 runs about a week behind real time; this season's line currently ends on "
+        + lastLabel + " and grows by a day each day. It is a model of the weather at each "
+        + "resort's summit height, the same record as the 35-year view, so seasons compare "
+        + "like with like — but it is not a thermometer on the summit, and a season can sit "
+        + "high in the ranking just because the Alps have warmed since the 1990s, which is "
+        + "why the last ten seasons are given as a second yardstick."
+        + (M.cum ? "" : sofar.smooth
+           ? " Each point is the average of that day and the six before it." : "") }));
+}
+
+function soFarChart(D, M, past, cur, lastIdx) {
+  const n = D.days.length;
+  const w = Math.max(320, ($("#view").clientWidth || 900) - 40), h = w < 560 ? 300 : 380;
+  const m = { l: 50, r: 14, t: 14, b: 40, w, h };
+  const pastS = past.map(s => ({ season: s.season, v: sofarSeries(s[sofar.measure], M) }));
+  const curS = cur ? sofarSeries(cur[sofar.measure], M) : [];
+  // Median of the earlier seasons, day by day: the line to beat.
+  const med = D.days.map((_, i) => {
+    const v = pastS.map(s => s.v[i]).filter(x => x != null).sort((a, b) => a - b);
+    if (!v.length) return null;
+    const k = v.length >> 1;
+    return v.length % 2 ? v[k] : (v[k - 1] + v[k]) / 2;
+  });
+  const ys = pastS.flatMap(s => s.v).concat(curS).filter(x => x != null);
+  if (!ys.length) return el("p", { class: "sub", text: "No values for this measure." });
+  const yDom = domainOf(ys);
+  if (M.cum) yDom[0] = 0;
+  const x = i => m.l + (n === 1 ? 0.5 : i / (n - 1)) * (w - m.l - m.r);
+  const y = v => m.t + (1 - (v - yDom[0]) / (yDom[1] - yDom[0])) * (h - m.t - m.b);
+  const svg = chartSvg(w, h);
+  for (const v of niceTicks(yDom, 5)) {
+    svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: y(v), y2: y(v), stroke: GRID }));
+    svg.appendChild(el("text", { x: m.l - 6, y: y(v) + 3, "text-anchor": "end",
+      "font-size": 10, fill: MUTED, text: fmt(v, M.cum ? 0 : (M.dp && yDom[1] - yDom[0] < 8 ? 1 : 0)) }));
+  }
+  if (!M.cum && yDom[0] < 0 && yDom[1] > 0 && M.unit === "°C")
+    svg.appendChild(el("line", { x1: m.l, x2: w - m.r, y1: y(0), y2: y(0), stroke: BASE }));
+  // Month starts, or every few days for a short window.
+  const step = n <= 21 ? (n <= 10 ? 1 : 3) : null;
+  D.days.forEach((md, i) => {
+    const show = step ? i % step === 0 : md.endsWith("-01") || (n <= 62 && md.endsWith("-15"));
+    if (!show) return;
+    svg.appendChild(el("line", { x1: x(i), x2: x(i), y1: h - m.b, y2: h - m.b + 4, stroke: BASE }));
+    svg.appendChild(el("text", { x: x(i), y: h - m.b + 16, "text-anchor": "middle",
+      "font-size": 10, fill: MUTED, text: mdLabel(md) }));
+  });
+  svg.appendChild(el("text", { x: 12, y: (m.t + h - m.b) / 2, "font-size": 11, fill: INK2,
+    "text-anchor": "middle", transform: `rotate(-90 12 ${(m.t + h - m.b) / 2})`,
+    text: M.label + " (" + M.unit + ")" }));
+
+  const path = vals => {
+    let d = "", pen = false;
+    vals.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      d += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); pen = true;
+    });
+    return d;
+  };
+  for (const s of pastS)
+    svg.appendChild(el("path", { d: path(s.v), fill: "none", stroke: "#a9a79f",
+      "stroke-width": 1, "stroke-opacity": 0.35 }));
+  svg.appendChild(el("path", { d: path(med), fill: "none", stroke: INK2,
+    "stroke-width": 1.6, "stroke-dasharray": "5 4" }));
+  const hl = el("path", { fill: "none", stroke: INK, "stroke-width": 1.6, "stroke-opacity": 0 });
+  svg.appendChild(hl);
+  if (cur && lastIdx >= 0) {
+    svg.appendChild(el("path", { d: path(curS), fill: "none", stroke: SERIES[1],
+      "stroke-width": 2.8, "stroke-linejoin": "round" }));
+    if (curS[lastIdx] != null)
+      svg.appendChild(el("circle", { cx: x(lastIdx), cy: y(curS[lastIdx]), r: 4,
+        fill: SERIES[1], stroke: SURF, "stroke-width": 1.5 }));
+  }
+
+  // One invisible layer reads the whole chart: nearest day, and the earlier
+  // season whose line is closest to the pointer is picked out in ink.
+  const cursor = el("line", { y1: m.t, y2: h - m.b, stroke: BASE, "stroke-width": 1,
+                             "stroke-opacity": 0 });
+  svg.appendChild(cursor);
+  const hit = el("rect", { x: m.l, y: m.t, width: w - m.l - m.r, height: h - m.t - m.b,
+                           fill: "transparent" });
+  const toLocal = e => {
+    const r = svg.getBoundingClientRect();
+    return [(e.clientX - r.left) * w / r.width, (e.clientY - r.top) * h / r.height];
+  };
+  hit.addEventListener("mousemove", e => {
+    const [px, py] = toLocal(e);
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - m.l) / (w - m.l - m.r) * (n - 1))));
+    cursor.setAttribute("x1", x(i)); cursor.setAttribute("x2", x(i));
+    cursor.setAttribute("stroke-opacity", 1);
+    const vals = pastS.filter(s => s.v[i] != null);
+    let near = null;
+    for (const s of vals) if (!near || Math.abs(y(s.v[i]) - py) < Math.abs(y(near.v[i]) - py)) near = s;
+    hl.setAttribute("d", near ? path(near.v) : ""); hl.setAttribute("stroke-opacity", near ? 0.85 : 0);
+    const sorted = vals.slice().sort((a, b) => b.v[i] - a.v[i]);
+    const hi = sorted[0], lo = sorted[sorted.length - 1];
+    const c = curS[i];
+    let rows = "";
+    if (c != null) {
+      const rk = vals.filter(s => s.v[i] > c).length + 1;
+      rows += `<tr><td style="color:${SERIES[1]}">${seasonLabel(cur.season)}</td>`
+            + `<td>${fmt(c, M.dp)} ${M.unit}</td><td>${ordinal(rk)} of ${vals.length + 1}</td></tr>`;
+    }
+    if (near) rows += `<tr><td>${seasonLabel(near.season)}</td><td>${fmt(near.v[i], M.dp)} ${M.unit}</td><td>nearest line</td></tr>`;
+    if (med[i] != null) rows += `<tr><td>Median</td><td>${fmt(med[i], M.dp)} ${M.unit}</td><td></td></tr>`;
+    if (hi) rows += `<tr><td>Highest</td><td>${fmt(hi.v[i], M.dp)} ${M.unit}</td><td>${seasonLabel(hi.season)}</td></tr>`
+                  + `<tr><td>Lowest</td><td>${fmt(lo.v[i], M.dp)} ${M.unit}</td><td>${seasonLabel(lo.season)}</td></tr>`;
+    showTip(`<div class="t-date">${mdLabel(D.days[i])}</div>`
+      + `<div class="t-sub">${D.name} · ${M.label.toLowerCase()}`
+      + `${M.cum ? " since " + mdLabel(D.days[0]) : sofar.smooth ? ", 7-day average" : ""}</div>`
+      + `<table>${rows}</table>`, e.clientX, e.clientY);
+  });
+  hit.addEventListener("mouseleave", () => {
+    hideTip(); cursor.setAttribute("stroke-opacity", 0); hl.setAttribute("stroke-opacity", 0);
+  });
+  svg.appendChild(hit);
+
+  const wrap = el("div", {});
+  const lg = el("div", { class: "legend" });
+  const key = (style, label) => {
+    const s = el("span", {});
+    const sw = el("span", { style: "display:inline-block;width:18px;height:0;vertical-align:3px;"
+                                 + "margin-right:5px;border-top:" + style });
+    s.appendChild(sw); s.appendChild(document.createTextNode(label));
+    lg.appendChild(s);
+  };
+  if (cur) key(`3px solid ${SERIES[1]}`, seasonLabel(cur.season) + " (this season)");
+  if (past.length) key("1.5px solid rgba(169,167,159,0.6)", "Each earlier season, "
+    + seasonLabel(past[0].season) + " to " + seasonLabel(past[past.length - 1].season));
+  key(`2px dashed ${INK2}`, "Median of the earlier seasons");
+  wrap.appendChild(lg);
+  wrap.appendChild(svg);
+  return wrap;
+}
+
 /* ---------- render dispatch ---------- */
 function render() {
   hideTip();
   const host = $("#view");
   host.innerHTML = "";
   const ownControls = tab === "plan" || tab === "model" || tab === "climate" || tab === "arrival"
-                      || tab === "sun";
+                      || tab === "sun" || tab === "sofar";
   $("#resortCtl").style.display =
     (tab === "compare" || tab === "wind" || tab === "climate") ? "" : "none";
   $("#rangeCtl").style.display = ownControls ? "none" : "";
@@ -3098,7 +3406,7 @@ function render() {
     ({ heatmap: renderHeatmap, compare: renderCompare, wind: renderWind,
        lifts: renderLifts, league: renderLeague, plan: renderPlan,
        scatter: renderScatter, climate: renderClimate, sun: renderSun, arrival: renderArrival,
-       model: renderModel })[tab](host);
+       sofar: renderSoFar, model: renderModel })[tab](host);
   } catch (err) {
     host.appendChild(el("p", { class: "sub", text: "Render error: " + err.message }));
   }

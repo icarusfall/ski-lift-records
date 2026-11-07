@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from flask import (Flask, flash, jsonify, redirect, render_template,
                    request, session, url_for, Response)
 from scraper.db import (cursor, get_setting, set_setting, set_resort_enabled)
+from scraper.model import CLIMATE_FLOOR_SQL
 
 app = Flask(__name__)
 
@@ -193,7 +194,7 @@ def index():
         span = cur.fetchone()
         cur.execute("SELECT COUNT(*) AS n FROM lift_readings")
         readings = cur.fetchone()["n"]
-        cur.execute("SELECT MIN(date) AS first FROM climate_daily")
+        cur.execute(f"SELECT MIN(date) AS first FROM climate_daily WHERE {CLIMATE_FLOOR_SQL}")
         climate_from = cur.fetchone()["first"]
     return render_template("index.html", resorts=resorts, span=span,
                            readings=readings, climate_from=climate_from,
@@ -560,7 +561,7 @@ def api_climate():
                    AVG(c.wind_gust_max_kmh)  AS gust,
                    AVG(c.cloud_cover_pct)    AS cloud
             FROM climate_daily c
-            WHERE {window}
+            WHERE {window} AND {CLIMATE_FLOOR_SQL}
             GROUP BY c.resort_id, season
             ORDER BY c.resort_id, season
         """, {"a": start, "b": end})
@@ -948,6 +949,7 @@ def _autumn_rows(resort_id: str | None):
                        AS season
             FROM climate_daily
             WHERE EXTRACT(MONTH FROM date) IN (10, 11, 12, 1) {where}
+              AND {CLIMATE_FLOOR_SQL}
             ORDER BY resort_id, date
         """, {"r": resort_id})
         return cur.fetchall()
@@ -1052,6 +1054,97 @@ def api_season_start():
     resp = jsonify({"start": "10-01", "days": AUTUMN_DAYS,
                     "thresholds": ARRIVAL_THRESHOLDS, "enso": _enso(),
                     "resorts": out})
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
+# Columns the "season so far" view can show, from climate_daily.
+SO_FAR_MEASURES = {
+    "temp_mean": "temp_mean_c", "temp_max": "temp_max_c", "temp_min": "temp_min_c",
+    "snowfall": "snowfall_cm", "precip": "precipitation_mm",
+    "gust": "wind_gust_max_kmh", "sunshine": "sunshine_hours",
+}
+# Seasons run 1 August to 31 July. Days are placed on the calendar of a season
+# with no 29 February (2001/02), so every season lines up day for day; the odd
+# 29 February is left out rather than shifting the rest of that spring by one.
+_SO_FAR_REF = date(2001, 8, 1)
+
+
+def _season_day(d: date) -> int | None:
+    if d.month == 2 and d.day == 29:
+        return None
+    ref = date(2001 if d.month >= 8 else 2002, d.month, d.day)
+    return (ref - _SO_FAR_REF).days
+
+
+@app.route("/api/season-so-far/<resort_id>.json")
+def api_season_so_far(resort_id: str):
+    """One resort's calendar window, day by day, for every season since 1991.
+
+    Answers "is this season shaping up warm (or snowy, or windy)?" by laying
+    the season under way over every earlier one on the same calendar days. Only
+    ERA5 is used, including for the season under way: the hourly forecast-model
+    archive reaches closer to today, but measured over Nov 2025 - Oct 2026 it
+    runs 2.7 C warmer than ERA5 on the daily mean (4.4 C on the minimum), so
+    splicing it on would make every season look like a warm one.
+    """
+    a, b = request.args.get("from", "10-01"), request.args.get("to", "01-31")
+    try:
+        ia = _season_day(date(2002 if a < "08" else 2001, int(a[:2]), int(a[3:])))
+        ib = _season_day(date(2002 if b < "08" else 2001, int(b[:2]), int(b[3:])))
+    except (ValueError, IndexError):
+        return jsonify({"error": "from/to must look like MM-DD"}), 400
+    if ia is None or ib is None or ia > ib:
+        return jsonify({"error": "the window must run forward within one season "
+                                 "(August to July)"}), 400
+
+    cols = ", ".join(f"{c} AS {k}" for k, c in SO_FAR_MEASURES.items())
+    with cursor() as cur:
+        cur.execute("SELECT name, top_altitude_m FROM resorts WHERE id = %s", (resort_id,))
+        meta = cur.fetchone()
+        if not meta:
+            return jsonify({"error": "no such resort"}), 404
+        cur.execute(f"""
+            SELECT date, {cols} FROM climate_daily
+            WHERE resort_id = %s AND {CLIMATE_FLOOR_SQL}
+            ORDER BY date
+        """, (resort_id,))
+        rows = cur.fetchall()
+
+    n = ib - ia + 1
+    seasons: dict[int, dict] = {}
+    # The newest day held at all, not the newest inside the window: it is what
+    # says how far behind the record runs.
+    last = rows[-1]["date"] if rows else None
+    for r in rows:
+        i = _season_day(r["date"])
+        if i is None or not ia <= i <= ib:
+            continue
+        s = r["date"].year if r["date"].month >= 8 else r["date"].year - 1
+        rec = seasons.setdefault(s, {k: [None] * n for k in SO_FAR_MEASURES} | {"_n": 0})
+        rec["_n"] += 1
+        for k in SO_FAR_MEASURES:
+            v = r[k]
+            rec[k][i - ia] = None if v is None else round(float(v), 1)
+
+    today = datetime.now(timezone.utc).date()
+    current = today.year if today.month >= 8 else today.year - 1
+    out = []
+    for s in sorted(seasons):
+        rec = seasons[s]
+        have = rec.pop("_n")
+        # A past season is only comparable if it covers the whole window
+        # (1990/91 starts on 1 January 1991, so an autumn window drops it).
+        if s != current and have < n:
+            continue
+        out.append({"season": s, "current": s == current, **rec})
+    resp = jsonify({
+        "resort_id": resort_id, "name": meta["name"], "top_m": meta["top_altitude_m"],
+        "from": a, "to": b,
+        "days": [(_SO_FAR_REF + timedelta(days=ia + k)).strftime("%m-%d") for k in range(n)],
+        "current": current, "last_date": last.isoformat() if last else None,
+        "seasons": out,
+    })
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 

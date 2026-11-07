@@ -32,6 +32,14 @@ CORE_SEASON = ("12-15", "04-15")
 # Shrinkage strength: a bin with this many observed days counts equally with
 # the pooled all-resort estimate. Keeps thin bins from producing wild numbers.
 SHRINK_K = 8.0
+# First day of the climate record the published figures use. climate_daily
+# also holds 1950-1990 for one-off studies, but ERA5 before the satellite era
+# (1979) rests on far fewer observations, worst of all for gusts over
+# mountains, so mixing those years in would shift every trip-planner number
+# and could invent a trend. Widening this is a deliberate decision, not a
+# side effect of loading more data.
+CLIMATE_FROM = "1991-01-01"
+CLIMATE_FLOOR_SQL = f"date >= DATE '{CLIMATE_FROM}'"
 
 
 def _bin_for(gust: float | None) -> str | None:
@@ -137,7 +145,7 @@ def week_frequency(resort_id: str, start_md: str, end_md: str) -> dict:
             WHERE resort_id = %s
               AND TO_CHAR(date, 'MM-DD') BETWEEN %s AND %s
               AND wind_gust_max_kmh IS NOT NULL
-        """, (resort_id, start_md, end_md))
+              AND """ + CLIMATE_FLOOR_SQL, (resort_id, start_md, end_md))
         gusts = [float(r["g"]) for r in cur.fetchall()]
     if not gusts:
         return {}
@@ -196,6 +204,7 @@ def storm_runs(resort_id: str, start_md: str, end_md: str,
             WHERE resort_id = %s
               AND TO_CHAR(date, 'MM-DD') BETWEEN %s AND %s
               AND wind_gust_max_kmh IS NOT NULL
+              AND """ + CLIMATE_FLOOR_SQL + """
             ORDER BY date
         """, (resort_id, start_md, end_md))
         rows = cur.fetchall()
@@ -247,6 +256,7 @@ def all_window_stats(start_md: str, end_md: str, threshold: float = 60.0,
             FROM climate_daily
             WHERE {window}
               AND wind_gust_max_kmh IS NOT NULL
+              AND {CLIMATE_FLOOR_SQL}
             ORDER BY resort_id, date
         """, (start_md, end_md))
         rows = cur.fetchall()

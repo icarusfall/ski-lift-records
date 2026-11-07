@@ -7,6 +7,7 @@ reanalysis measures how often that weather actually happens. Together they
 answer planning questions after one season instead of after ten.
 
     python -m scraper.climate --backfill              # all resorts, 1991 onward
+    python -m scraper.climate --early                 # extend back to 1950 (resumable)
     python -m scraper.climate --backfill cervinia
     python -m scraper.climate --backfill --from 2010-01-01
     python -m scraper.climate --update                # top up recent days only
@@ -212,6 +213,48 @@ def backfill(resort_filter: str | None = None, start: str = DEFAULT_START,
     print(f"\n  {total:,} resort-days stored.\n")
 
 
+EARLY_START = date(1950, 1, 1)
+
+
+def backfill_early():
+    """Extend each resort back to 1950, stopping before what it already holds.
+
+    For one-off long-baseline studies only: the published figures stay on
+    model.CLIMATE_FROM (1991) onward. Like update_recent() it is its own
+    resume mechanism, since a resort that already reaches 1950 is skipped, so
+    run it once or twice a day until it reports nothing left (the daily
+    allowance covers about nine resorts' worth of 41 years).
+    """
+    with cursor() as cur:
+        cur.execute("SELECT resort_id, MIN(date) AS first FROM climate_daily GROUP BY resort_id")
+        first = {r["resort_id"]: r["first"] for r in cur.fetchall()}
+
+    todo = []
+    for r in load_resorts():
+        if not r.get("latitude") or r["id"] not in first:
+            continue          # never fetched at all: --backfill handles that
+        if first[r["id"]] > EARLY_START:
+            todo.append((r, first[r["id"]] - timedelta(days=1)))
+    if not todo:
+        print("\n  Every resort already reaches back to 1950.\n")
+        return
+    print(f"\n  Extending {len(todo)} resort(s) back to {EARLY_START}\n")
+    done = 0
+    for resort, end in todo:
+        try:
+            n = _store(_rows(resort["id"], _fetch(resort, EARLY_START.isoformat(),
+                                                  end.isoformat())))
+            done += 1
+            print(f"  {resort['id']:<16} +{n:,} days ({EARLY_START} -> {end})")
+        except QuotaExhausted as e:
+            print(f"\n  {_resume_hint(str(e)).replace('--update', '--early')}")
+            break
+        except Exception as e:
+            print(f"  {resort['id']:<16} FAILED: {e}")
+        time.sleep(REQUEST_PAUSE_S)
+    print(f"\n  {done} resort(s) extended; {len(todo) - done} still to do.\n")
+
+
 def update_recent():
     """Top up each resort from its latest stored day, and no further back.
 
@@ -343,6 +386,9 @@ def main():
 
     if "--update" in args:
         update_recent()
+        return 0
+    if "--early" in args:
+        backfill_early()
         return 0
     if "--indices" in args:
         print("\nLoading NAO and ONI monthly indices...")
